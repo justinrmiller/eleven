@@ -482,7 +482,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = [0u8; 64];
-            let _ = tx.send(mss.read_buf_exact(&mut buf).map_err(|e| e.kind()));
+            let _ = tx.send(ReadBytes::read_buf_exact(&mut mss, &mut buf).map_err(|e| e.kind()));
         });
         let result = rx
             .recv_timeout(Duration::from_secs(5))
