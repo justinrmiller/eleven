@@ -62,7 +62,7 @@ git tag v0.2.0 && git push origin v0.2.0
 | Platform | Files |
 |---|---|
 | macOS 11+ | universal (Apple Silicon + Intel) `eleven.app` as `.dmg` and `.zip` |
-| Linux x86_64 | `.deb` for Debian/Ubuntu, and a `.tar.gz` (built on Ubuntu 22.04, glibc 2.35+) |
+| Linux x86_64 and ARM64 | `.deb` for Debian/Ubuntu, and a `.tar.gz` (built on Ubuntu 22.04, glibc 2.35+) |
 
 A `SHA256SUMS.txt` is attached too. Tags with a hyphen (`v0.2.0-beta.1`) become pre-releases. **Run workflow** on the Actions tab builds the packages without publishing. Locally, `make dist-macos` and `make dist-linux` produce the same files in `dist/`.
 

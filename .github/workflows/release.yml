@@ -37,24 +37,41 @@ jobs:
           fi
 
   linux:
-    name: Linux x86_64 (.tar.gz, .deb)
-    # Built on the oldest supported Ubuntu so the binary runs on older glibc versions too.
-    runs-on: ubuntu-22.04
+    name: Linux ${{ matrix.arch }} (.tar.gz, .deb)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu so the binary runs on older glibc versions too.
+          - runner: ubuntu-22.04
+            arch: x86_64
+          # Native ARM64 runner (free for public repositories).
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config curl
       - name: Install pinned toolchain
-        run: rustup toolchain install
+        run: |
+          # The ARM images may not ship rustup; install it if needed.
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install
+          rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-linux
+          key: release-linux-${{ matrix.arch }}
       - name: Package
         run: ./scripts/package-linux.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: eleven-linux-x86_64
+          name: eleven-linux-${{ matrix.arch }}
           path: |
             dist/*.tar.gz
             dist/*.deb
@@ -114,7 +131,8 @@ jobs:
             |---|---|
             | macOS 11+ (Apple Silicon and Intel) | `eleven-*-macos-universal.dmg` (or `.zip`) |
             | Linux x86_64, Debian/Ubuntu | `eleven_*_amd64.deb`: `sudo apt install ./eleven_*_amd64.deb` |
-            | Linux x86_64, other distros | `eleven-*-linux-x86_64.tar.gz` |
+            | Linux ARM64, Debian/Ubuntu (e.g. Raspberry Pi OS 64-bit) | `eleven_*_arm64.deb` |
+            | Linux, other distros | `eleven-*-linux-x86_64.tar.gz` or `eleven-*-linux-aarch64.tar.gz` |
 
             **macOS:** the app is not notarized yet, so the first launch is blocked. Right-click
             `eleven.app` and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/eleven.app`.
