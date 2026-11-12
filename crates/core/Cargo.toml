@@ -1,0 +1,21 @@
+[package]
+name = "eleven-core"
+description = "Pure, I/O-free logic for the eleven audio player: playlists, EQ maths, analysers, formatting and config."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+fastrand.workspace = true
+rustfft.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

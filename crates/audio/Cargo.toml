@@ -1,0 +1,25 @@
+[package]
+name = "eleven-audio"
+description = "Decoding, DSP, streaming and output engine for the eleven audio player."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+eleven-core.workspace = true
+cpal.workspace = true
+crossbeam-channel.workspace = true
+lofty.workspace = true
+log.workspace = true
+rtrb.workspace = true
+rubato.workspace = true
+symphonia.workspace = true
+thiserror.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

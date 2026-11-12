@@ -1,0 +1,83 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/skin", "crates/audio", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "eleven: an XMMS-style audio player written in Rust and egui"
+
+[workspace.dependencies]
+eleven-core = { path = "crates/core" }
+eleven-skin = { path = "crates/skin" }
+eleven-audio = { path = "crates/audio" }
+
+# GUI
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = "0.37"
+egui_kittest = "0.37"
+rfd = "0.18"
+souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
+
+# Audio
+symphonia = { version = "0.6", default-features = false, features = ["all", "opt-simd"] }
+cpal = "0.18"
+rubato = "5"
+rtrb = "0.4"
+rustfft = "6.4"
+lofty = "0.25"
+
+# Networking / archives / images
+ureq = "3.5"
+zip = { version = "9.5", default-features = false, features = ["deflate"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "png"] }
+
+# Utilities
+crossbeam-channel = "0.5"
+directories = "6"
+fastrand = "2.5"
+serde = { version = "1", features = ["derive"] }
+toml = "1.2"
+thiserror = "2"
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+# Testing
+proptest = "1.12"
+tempfile = "3"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+cloned_instead_of_copied = "warn"
+dbg_macro = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+todo = "warn"
+uninlined_format_args = "warn"
+unnested_or_patterns = "warn"
+
+[profile.dev.package."*"]
+# Decoding audio in an unoptimised debug build stutters; optimise dependencies.
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

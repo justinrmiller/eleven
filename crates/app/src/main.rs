@@ -1,0 +1,2 @@
+//! eleven binary.
+fn main() {}
