@@ -50,6 +50,24 @@ install -Dm644 packaging/linux/eleven.desktop ~/.local/share/applications/eleven
 install -Dm644 packaging/icon-256.png ~/.local/share/icons/hicolor/256x256/apps/eleven.png
 ```
 
+## Releases
+
+Pushing a version tag builds and publishes a GitHub release (`.github/workflows/release.yml`):
+
+```sh
+# bump `version` in Cargo.toml first; the tag must match it
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+| Platform | Files |
+|---|---|
+| macOS 11+ | universal (Apple Silicon + Intel) `eleven.app` as `.dmg` and `.zip` |
+| Linux x86_64 | `.deb` for Debian/Ubuntu, and a `.tar.gz` (built on Ubuntu 22.04, glibc 2.35+) |
+
+A `SHA256SUMS.txt` is attached too. Tags with a hyphen (`v0.2.0-beta.1`) become pre-releases. **Run workflow** on the Actions tab builds the packages without publishing. Locally, `make dist-macos` and `make dist-linux` produce the same files in `dist/`.
+
+The macOS app is ad-hoc signed but not notarized, so Gatekeeper blocks the first launch: right-click it and choose **Open**. Notarization needs an Apple Developer ID certificate stored as repository secrets.
+
 ## Keyboard shortcuts
 
 `Ctrl` is `Cmd` on macOS.

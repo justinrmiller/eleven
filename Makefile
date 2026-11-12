@@ -4,7 +4,7 @@ CARGO ?= cargo
 COV_IGNORE := (cpal_out|media_keys|main)\.rs$$
 COV_MIN ?= 90
 
-.PHONY: help all build run release test lint fmt clippy cov cov-html fixtures bundle-macos clean
+.PHONY: help all build run release test lint fmt clippy cov cov-html fixtures bundle-macos dist-macos dist-linux clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -45,6 +45,12 @@ fixtures: ## Regenerate audio test fixtures (needs ffmpeg)
 
 bundle-macos: ## Build dist/eleven.app (macOS only)
 	./scripts/bundle-macos.sh
+
+dist-macos: ## Universal .app as .dmg and .zip in dist/ (macOS only)
+	./scripts/package-macos.sh
+
+dist-linux: ## .tar.gz and .deb in dist/ (Linux only)
+	./scripts/package-linux.sh
 
 clean: ## Remove build output
 	$(CARGO) clean

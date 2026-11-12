@@ -1,0 +1,122 @@
+name: Release
+
+# Push a version tag to publish a release:
+#   git tag v0.2.0 && git push origin v0.2.0
+# The tag must match `version` in Cargo.toml. "Run workflow" (workflow_dispatch) builds the
+# packages as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+    branches: ["claude/release-workflow"] # TEMPORARY: build-only test runs; removed before merge
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: check tag matches Cargo.toml
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compare versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::Tag v$tag does not match Cargo.toml version $crate"
+            exit 1
+          fi
+
+  linux:
+    name: Linux x86_64 (.tar.gz, .deb)
+    # Built on the oldest supported Ubuntu so the binary runs on older glibc versions too.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - name: Install pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux
+      - name: Package
+        run: ./scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eleven-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal (.dmg, .zip)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-macos
+      - name: Package
+        run: ./scripts/package-macos.sh
+      - name: Check the bundle
+        run: |
+          plutil -lint dist/eleven.app/Contents/Info.plist
+          lipo -archs dist/eleven.app/Contents/MacOS/eleven | grep -q x86_64
+          lipo -archs dist/eleven.app/Contents/MacOS/eleven | grep -q arm64
+          codesign --verify --deep --strict dist/eleven.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eleven-macos-universal
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Downloads
+
+            | Platform | File |
+            |---|---|
+            | macOS 11+ (Apple Silicon and Intel) | `eleven-*-macos-universal.dmg` (or `.zip`) |
+            | Linux x86_64, Debian/Ubuntu | `eleven_*_amd64.deb`: `sudo apt install ./eleven_*_amd64.deb` |
+            | Linux x86_64, other distros | `eleven-*-linux-x86_64.tar.gz` |
+
+            **macOS:** the app is not notarized yet, so the first launch is blocked. Right-click
+            `eleven.app` and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/eleven.app`.
+
+            Verify downloads with `sha256sum -c SHA256SUMS.txt`.
