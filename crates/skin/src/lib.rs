@@ -7,6 +7,7 @@
 //!
 //! No skin artwork ships with eleven; [`synthetic`] builds placeholder skins for tests.
 
+pub mod bitmap;
 pub mod sprites;
 pub mod synthetic;
 pub mod textfiles;
@@ -217,17 +218,21 @@ fn read_archive(bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, SkinError> {
 }
 
 fn decode_bitmap(name: &str, data: &[u8]) -> Result<Bitmap, SkinError> {
-    let img = image::load_from_memory(data)
-        .map_err(|e| SkinError::Image {
+    match image::load_from_memory(data) {
+        Ok(img) => {
+            let img = img.to_rgba8();
+            Ok(Bitmap {
+                width: img.width(),
+                height: img.height(),
+                rgba: img.into_raw(),
+            })
+        }
+        // Old skin tools wrote slightly malformed RLE bitmaps that `image` rejects.
+        Err(e) => bitmap::decode_rle_bmp(data).ok_or_else(|| SkinError::Image {
             name: name.to_owned(),
             reason: e.to_string(),
-        })?
-        .to_rgba8();
-    Ok(Bitmap {
-        width: img.width(),
-        height: img.height(),
-        rgba: img.into_raw(),
-    })
+        }),
+    }
 }
 
 #[cfg(test)]
