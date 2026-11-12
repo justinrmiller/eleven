@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=eleven
+GenericName=Audio Player
+Comment=An XMMS-style audio player. It goes to eleven.
+Exec=eleven %U
+Icon=eleven
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/wav;audio/x-wav;audio/aac;audio/mp4;audio/x-m4a;audio/x-mpegurl;audio/x-scpls;
+Keywords=music;player;xmms;winamp;mp3;flac;
+StartupWMClass=eleven

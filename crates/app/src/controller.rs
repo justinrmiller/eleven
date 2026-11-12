@@ -375,7 +375,11 @@ impl Controller {
         }
         match self.display_entry() {
             Some((_, e)) => e.display_title(),
-            None => self.track.as_ref().and_then(|t| t.title.clone()).unwrap_or_default(),
+            None => self
+                .track
+                .as_ref()
+                .and_then(|t| t.title.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -845,8 +849,13 @@ mod tests {
 
     #[test]
     fn startup_pushes_settings_to_backend() {
-        let config =
-            Config { volume: 0.3, balance: 0.5, shuffle: true, repeat: true, ..Config::default() };
+        let config = Config {
+            volume: 0.3,
+            balance: 0.5,
+            shuffle: true,
+            repeat: true,
+            ..Config::default()
+        };
         let r = rig_with(config, Persistence::default());
         let calls = r.backend.lock().unwrap().calls.clone();
         assert!(calls.contains(&Call::Volume(0.3)));

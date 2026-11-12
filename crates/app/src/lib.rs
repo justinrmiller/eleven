@@ -5,6 +5,10 @@
 
 pub mod backend;
 pub mod controller;
+pub mod media_keys;
 pub mod paths;
 
 pub use controller::{Controller, Persistence};
+pub mod ui;
+
+pub use ui::ElevenApp;
