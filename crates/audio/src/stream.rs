@@ -278,8 +278,10 @@ impl Read for StreamSource {
         let mut buf = inner.buffer.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
             if inner.interrupted() {
+                // Not `Interrupted`: by convention readers retry on that kind (symphonia's
+                // `read_buf_exact` does), which would spin forever.
                 return Err(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
+                    std::io::ErrorKind::ConnectionAborted,
                     "stream stopped",
                 ));
             }
@@ -459,6 +461,32 @@ mod tests {
         });
         // Prebuffering 48 KiB at 1 byte/ms would take ~50 s; the interrupt ends it early.
         let err = src.read(&mut [0u8; 16]).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
+        // Further reads keep failing rather than blocking.
+        assert!(src.read(&mut [0u8; 16]).is_err());
+    }
+
+    #[test]
+    fn interrupt_ends_symphonia_exact_reads() {
+        use symphonia::core::io::{MediaSourceStream, ReadBytes};
+        let (on, _events) = collector();
+        let interrupt = Arc::new(AtomicU64::new(0));
+        let src = StreamSource::spawn(Box::new(Endless), 0, Arc::clone(&interrupt), 0, on);
+        let mut mss =
+            MediaSourceStream::new(Box::new(ReadOnlySource::new(src)), Default::default());
+        let flag = Arc::clone(&interrupt);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            flag.fetch_add(1, Ordering::AcqRel);
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            let _ = tx.send(mss.read_buf_exact(&mut buf).map_err(|e| e.kind()));
+        });
+        let result = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("exact read must not spin forever");
+        assert!(result.is_err());
     }
 }
