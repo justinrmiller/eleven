@@ -210,10 +210,8 @@ impl Analyzer {
 /// Averages interleaved stereo frames to mono. A trailing half-frame is ignored.
 #[must_use]
 pub fn downmix_stereo(interleaved: &[f32]) -> Vec<f32> {
-    interleaved
-        .chunks_exact(2)
-        .map(|f| 0.5 * (f[0] + f[1]))
-        .collect()
+    let (frames, _) = interleaved.as_chunks::<2>();
+    frames.iter().map(|[l, r]| 0.5 * (l + r)).collect()
 }
 
 /// Picks `points` evenly spaced samples for the oscilloscope, clamped to `-1.0..=1.0`.

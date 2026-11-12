@@ -110,7 +110,7 @@ impl Equalizer {
         if !self.is_active() {
             return;
         }
-        for frame in interleaved.chunks_exact_mut(2) {
+        for frame in interleaved.as_chunks_mut::<2>().0 {
             for (ch, sample) in frame.iter_mut().enumerate() {
                 let mut x = f64::from(*sample * self.preamp);
                 for pair in &mut self.filters {

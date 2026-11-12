@@ -87,8 +87,10 @@ fn mono_is_duplicated_to_both_channels() {
     let samples = decode_all(&mut d);
     assert!(
         samples
-            .chunks_exact(2)
-            .all(|f| (f[0] - f[1]).abs() < f32::EPSILON)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|[l, r]| (l - r).abs() < f32::EPSILON)
     );
 }
 
