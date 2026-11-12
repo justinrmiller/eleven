@@ -128,7 +128,7 @@ make cov     # line coverage via cargo-llvm-cov, gated at 90 %
 
 Coverage is about 94 % of lines. Excluded from the gate are `cpal_out.rs` (needs a sound card), `media_keys.rs` (needs a D-Bus or macOS session) and `main.rs`.
 
-CI (`.github/workflows/eleven-ci.yml`) runs on Ubuntu and macOS. It runs fmt, clippy and tests on both, coverage on Linux, and builds the `.app` bundle on macOS.
+CI (`.github/workflows/ci.yml`) runs on Ubuntu and macOS. It runs fmt, clippy and tests on both, coverage on Linux, and builds the `.app` bundle on macOS.
 
 ## Known limitations
 
