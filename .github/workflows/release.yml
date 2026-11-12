@@ -7,7 +7,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: ["claude/release-workflow"] # TEMPORARY: build-only test runs; removed before merge
   workflow_dispatch:
 
 permissions:
