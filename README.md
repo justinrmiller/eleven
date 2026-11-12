@@ -8,10 +8,10 @@ It goes to eleven.
 ## Features
 
 - **Classic layout.** Main window, 10-band equalizer and playlist editor, docked in one 275-pixel-wide window. Each section can be shown or hidden. Also double size, shade mode, always-on-top, and a custom title bar you drag to move the window.
-- **Main window.** 7-segment clock (click it to switch between elapsed and remaining), scrolling title, kbps/kHz and mono/stereo indicators, spectrum analyzer or oscilloscope (click it to cycle), seek bar, volume and balance sliders. The volume tooltip reads on a 0–11 scale.
+- **Main window.** 7-segment clock (click it to switch between elapsed and remaining), scrolling title, kbps/kHz and mono/stereo indicators, spectrum analyzer or oscilloscope (click it to cycle), seek bar, volume and balance sliders. The volume tooltip reads on a 0–11 scale. The O/A/I/D/V clutterbar opens the options menu and toggles always-on-top, file info, double size and the visualizer mode.
 - **Formats.** MP3, FLAC, Ogg Vorbis, WAV, AIFF, and AAC/ALAC in MP4/M4A, decoded by [symphonia](https://github.com/pdeljanov/Symphonia). Audio is resampled to the device rate when needed.
 - **Internet radio.** HTTP and Icecast/Shoutcast streams, with in-stream track titles (`StreamTitle`), buffering, and stream URLs inside M3U/PLS files.
-- **Equalizer.** 10 bands (60 Hz – 16 kHz, ±12 dB) plus a preamp and a live response graph. Built-in presets, and you can save your own.
+- **Equalizer.** 10 bands (60 Hz – 16 kHz, ±12 dB) plus a preamp and a live response graph. Built-in presets, and you can save your own. **AUTO** loads a preset saved for each track (Presets → Save auto-preset).
 - **Playlist.**
   - Add files, folders (recursive), or URLs, or drag and drop them in.
   - Multi-select with Ctrl/Cmd and Shift.
@@ -21,7 +21,7 @@ It goes to eleven.
   - Shuffle and repeat.
   - Total and selected playing time.
   - Tags are read in the background.
-- **Skins.** An original built-in look, plus classic Winamp 2 / XMMS `.wsz` skins. If a skin has no equalizer or playlist artwork, those sections fall back to the built-in look.
+- **Skins.** An original built-in look, plus classic Winamp 2 / XMMS `.wsz` skins. If a skin has no equalizer or playlist artwork, those sections fall back to the built-in look. The loader also accepts common quirks: upper-case names, files in sub-folders, and short `viscolor.txt` palettes. It has been checked against five skins from the Winamp Skin Museum.
 - **OS integration.** Media keys and "Now Playing" (MPRIS on Linux, Now Playing on macOS), native file dialogs, and keyboard shortcuts that follow XMMS.
 - **Persistence.** Settings, EQ presets, the playlist and the current track are saved between runs.
 

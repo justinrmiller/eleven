@@ -68,8 +68,18 @@ pub fn parse_pledit(text: &str) -> PlaylistColors {
 /// Number of colours in `viscolor.txt`.
 pub const VIS_COLORS: usize = 24;
 
+/// Colours needed for a usable palette: background, dots and the 16 spectrum rows.
+pub const MIN_VIS_COLORS: usize = 18;
+
+/// Peak-dot colour used when a palette omits it (the 24th entry).
+pub const DEFAULT_PEAK: Rgb = Rgb(150, 150, 150);
+
 /// Parses `viscolor.txt`: up to 24 lines of `r,g,b` with optional `// comments`.
-/// Returns `None` if fewer than 24 colours could be read.
+///
+/// Many skins ship short palettes (23 lines, without the peak colour, is common). As in
+/// Winamp, missing entries get defaults: oscilloscope colours reuse the top spectrum colours
+/// and the peak dots are grey. Returns `None` if fewer than [`MIN_VIS_COLORS`] colours are
+/// present.
 #[must_use]
 pub fn parse_viscolor(text: &str) -> Option<[Rgb; VIS_COLORS]> {
     let mut out = [Rgb::default(); VIS_COLORS];
@@ -91,7 +101,17 @@ pub fn parse_viscolor(text: &str) -> Option<[Rgb; VIS_COLORS]> {
             n += 1;
         }
     }
-    (n == VIS_COLORS).then_some(out)
+    if n < MIN_VIS_COLORS {
+        return None;
+    }
+    for i in n..VIS_COLORS {
+        out[i] = if i == VIS_COLORS - 1 {
+            DEFAULT_PEAK
+        } else {
+            out[2 + (i - MIN_VIS_COLORS)]
+        };
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -133,6 +153,21 @@ mod tests {
         assert_eq!(colors[0], Rgb(0, 0, 255));
         assert_eq!(colors[23], Rgb(23, 46, 255));
         assert_eq!(parse_viscolor("1,2,3\n// only one\n4 5\n"), None);
+        // Short palettes (23 lines is common) are completed with defaults.
+        let short: String = (0..23).map(|i| format!("{i},{i},{i}\n")).collect();
+        let c = parse_viscolor(&short).unwrap();
+        assert_eq!(c[22], Rgb(22, 22, 22), "parsed entries are kept");
+        assert_eq!(c[23], DEFAULT_PEAK);
+        let minimal: String = (0..18).map(|i| format!("{i},0,0\n")).collect();
+        let c = parse_viscolor(&minimal).unwrap();
+        assert_eq!(
+            c[18],
+            Rgb(2, 0, 0),
+            "scope colours reuse the top spectrum colours"
+        );
+        assert_eq!(c[22], Rgb(6, 0, 0));
+        let too_short: String = (0..17).map(|i| format!("{i},0,0\n")).collect();
+        assert_eq!(parse_viscolor(&too_short), None);
         // Space-separated and tab-separated values work too.
         let spaced: String = (0..24).map(|_| "10 20\t30\n").collect();
         assert_eq!(parse_viscolor(&spaced).unwrap()[5], Rgb(10, 20, 30));

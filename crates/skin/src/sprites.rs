@@ -153,6 +153,19 @@ pub mod title {
     pub const SHADE: [Sprite; 2] = [s(T, 0, 18, 9, 9), s(T, 9, 18, 9, 9)];
     /// Unshade button (shown in shade mode).
     pub const UNSHADE: [Sprite; 2] = [s(T, 0, 27, 9, 9), s(T, 9, 27, 9, 9)];
+    /// The clutterbar strip (O/A/I/D/V buttons) left of the clock.
+    pub const CLUTTERBAR: Sprite = s(T, 304, 0, 8, 43);
+    /// Clutterbar buttons drawn pressed/active, top to bottom: O, A, I, D, V. Each sits at its
+    /// own y offset inside [`CLUTTERBAR`] (see [`CLUTTER_OFFSETS`]).
+    pub const CLUTTER_SELECTED: [Sprite; 5] = [
+        s(T, 304, 47, 8, 8),
+        s(T, 312, 55, 8, 7),
+        s(T, 320, 62, 8, 7),
+        s(T, 328, 69, 8, 8),
+        s(T, 336, 77, 8, 7),
+    ];
+    /// Y offsets of the O/A/I/D/V buttons inside the clutterbar.
+    pub const CLUTTER_OFFSETS: [u32; 5] = [3, 11, 18, 25, 33];
 }
 
 /// Transport buttons, `[normal, pressed]`.
@@ -396,6 +409,14 @@ mod tests {
         all.extend(title::CLOSE);
         all.extend(title::SHADE);
         all.extend(title::UNSHADE);
+        all.push(title::CLUTTERBAR);
+        all.extend(title::CLUTTER_SELECTED);
+        for (sel, off) in title::CLUTTER_SELECTED.iter().zip(title::CLUTTER_OFFSETS) {
+            assert!(
+                off + sel.h <= title::CLUTTERBAR.h,
+                "button inside the strip"
+            );
+        }
         for b in [
             cbuttons::PREVIOUS,
             cbuttons::PLAY,

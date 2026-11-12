@@ -286,6 +286,7 @@ impl Controller {
                 self.consecutive_errors = 0;
                 self.analyzer.reset();
                 self.refresh_marquee();
+                self.apply_auto_preset();
             }
             PlayerEvent::Buffering(pct) => {
                 self.buffering = (pct < 100).then_some(pct);
@@ -608,6 +609,47 @@ impl Controller {
     /// Deletes a user preset.
     pub fn delete_preset(&mut self, name: &str) -> bool {
         self.config.delete_preset(name)
+    }
+
+    /// Turns the EQ "AUTO" mode (per-track presets) on or off.
+    pub fn set_eq_auto(&mut self, on: bool) {
+        self.config.eq_auto = on;
+        if on {
+            self.apply_auto_preset();
+        }
+    }
+
+    /// The preset name used by AUTO for the current track: its file name (or URL).
+    #[must_use]
+    pub fn auto_preset_name(&self) -> Option<String> {
+        self.playlist.current().map(|e| e.location.display_name())
+    }
+
+    /// Saves the current gains as the AUTO preset for the current track; returns its name.
+    pub fn save_auto_preset(&mut self) -> Option<String> {
+        let name = self.auto_preset_name()?;
+        self.save_preset(&name);
+        self.show_message(&format!("Auto-preset saved: {name}"));
+        Some(name)
+    }
+
+    /// With AUTO on, loads the preset saved for the current track, if there is one.
+    fn apply_auto_preset(&mut self) {
+        if !self.config.eq_auto {
+            return;
+        }
+        let Some(name) = self.auto_preset_name() else {
+            return;
+        };
+        if let Some(preset) = self
+            .config
+            .eq_presets
+            .iter()
+            .find(|p| p.name == name)
+            .cloned()
+        {
+            self.apply_preset(&preset);
+        }
     }
 
     /// Resets all bands and the preamp to 0 dB.
@@ -1110,6 +1152,35 @@ mod tests {
         assert!(r.c.delete_preset("Mine"));
         r.c.reset_eq();
         assert_eq!(r.c.config().equalizer.bands_db, [0.0; BANDS]);
+    }
+
+    #[test]
+    fn auto_presets_follow_the_track() {
+        let mut r = with_tracks(2);
+        assert_eq!(r.c.save_auto_preset(), None, "no current track yet");
+        r.c.play(); // track 00
+        r.c.set_eq_band(0, 9.0);
+        assert_eq!(r.c.save_auto_preset().as_deref(), Some("00"));
+        assert!(r.c.title_text().contains("Auto-preset saved: 00"));
+        r.c.reset_eq();
+        // AUTO off: starting the track again leaves the EQ alone.
+        push_event(&r, PlayerEvent::Started(info(true, Some(10))));
+        r.c.update(0.0);
+        assert!(r.c.config().equalizer.bands_db[0].abs() < f32::EPSILON);
+        // Turning AUTO on applies the current track's preset immediately...
+        r.c.set_eq_auto(true);
+        assert!((r.c.config().equalizer.bands_db[0] - 9.0).abs() < f32::EPSILON);
+        // ...and again whenever that track starts; tracks without a preset keep the EQ.
+        r.c.reset_eq();
+        r.c.next(); // track 01 has no preset
+        push_event(&r, PlayerEvent::Started(info(true, Some(10))));
+        r.c.update(0.0);
+        assert!(r.c.config().equalizer.bands_db[0].abs() < f32::EPSILON);
+        r.c.previous();
+        push_event(&r, PlayerEvent::Started(info(true, Some(10))));
+        r.c.update(0.0);
+        assert!((r.c.config().equalizer.bands_db[0] - 9.0).abs() < f32::EPSILON);
+        assert_eq!(r.c.auto_preset_name().as_deref(), Some("00"));
     }
 
     #[test]

@@ -65,6 +65,14 @@ fn presets_menu(ui: &mut Ui, ctl: &mut Controller, st: &mut UiState) {
             }
         });
     }
+    if let Some(name) = ctl.auto_preset_name()
+        && ui
+            .button(format!("Save auto-preset for \"{name}\""))
+            .clicked()
+    {
+        ctl.save_auto_preset();
+        ui.close();
+    }
     if ui.button("Reset to flat").clicked() {
         ctl.reset_eq();
         ui.close();
@@ -117,6 +125,28 @@ pub fn show(
     );
     if on.clicked() {
         ctl.set_eq_enabled(!enabled);
+    }
+
+    let auto = ctl.config().eq_auto;
+    let auto_resp = widgets::toggle(
+        ui,
+        Id::unique("eq_auto"),
+        l::auto(origin),
+        "Equalizer auto",
+        auto,
+    );
+    look.toggle(
+        &painter,
+        l::auto(origin),
+        Toggle::EqAuto,
+        auto,
+        auto_resp.is_pointer_button_down_on(),
+    );
+    if auto_resp
+        .on_hover_text("AUTO: load the preset saved for each track (Presets > Save auto-preset)")
+        .clicked()
+    {
+        ctl.set_eq_auto(!auto);
     }
 
     look.eq_graph(&painter, l::graph(origin), &ctl.config().equalizer);

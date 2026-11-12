@@ -7,7 +7,7 @@ use eleven_core::{PlaybackState, VisMode};
 use super::UiState;
 use super::actions::Action;
 use super::layout::{self, main as l};
-use super::look::{Glyph, Look, TitleButton, TitleKind, Toggle};
+use super::look::{Clutter, Glyph, Look, TitleButton, TitleKind, Toggle};
 use super::widgets::{self, Axis};
 use crate::controller::Controller;
 
@@ -167,6 +167,32 @@ pub fn show(
         );
     }
     look.status(&painter, l::status(origin), state);
+
+    // Clutterbar: O(ptions) A(lways on top) I(nfo) D(ouble size) V(isualisation).
+    let cfg = ctl.config().clone();
+    let mut lit = [false, cfg.always_on_top, false, cfg.double_size, false];
+    let mut clutter = Vec::with_capacity(5);
+    for (i, (rect, which)) in l::clutter_buttons(origin)
+        .into_iter()
+        .zip(Clutter::ALL)
+        .enumerate()
+    {
+        let r = widgets::button(ui, Id::unique(which.label()), rect, which.label());
+        lit[i] |= r.is_pointer_button_down_on();
+        clutter.push(r);
+    }
+    look.clutterbar(&painter, origin, lit);
+    egui::Popup::menu(&clutter[0]).show(|ui| main_menu(ui, ctl, &mut actions));
+    for (r, action) in clutter.iter().skip(1).zip([
+        Action::ToggleAlwaysOnTop,
+        Action::FileInfo,
+        Action::ToggleDoubleSize,
+        Action::CycleVis,
+    ]) {
+        if r.clicked() {
+            actions.push(action);
+        }
+    }
 
     // Visualiser (click cycles mode).
     let vis_rect = l::vis(origin);

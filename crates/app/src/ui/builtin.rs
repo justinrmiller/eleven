@@ -6,7 +6,7 @@ use eleven_core::format::{ClockDisplay, seven_segment};
 use eleven_core::{EqSettings, PlaybackState};
 
 use super::layout::{self, PL_FOOTER, PL_LEFT, PL_RIGHT, PL_TITLE};
-use super::look::{Glyph, Look, PlaylistStyle, TitleButton, TitleKind, Toggle, VisColors};
+use super::look::{Clutter, Glyph, Look, PlaylistStyle, TitleButton, TitleKind, Toggle, VisColors};
 
 /// Colours of the built-in look.
 pub mod palette {
@@ -330,11 +330,7 @@ impl Look for Builtin {
         let led = Rect::from_min_size(rect.left_center() + vec2(2.5, -1.5), vec2(3.0, 3.0));
         p.rect_filled(led, 1.0, if on { c::LCD_ON } else { c::LCD_OFF });
         let text_pos = rect.center() + vec2(2.0, 0.0);
-        let color = if which == Toggle::EqAuto {
-            c::LIGHT
-        } else {
-            c::ICON
-        };
+        let color = c::ICON;
         p.text(
             text_pos,
             Align2::CENTER_CENTER,
@@ -375,6 +371,24 @@ impl Look for Builtin {
             PlaybackState::Playing => draw_glyph(p, rect.expand(3.0), Glyph::Play, c::LCD_ON),
             PlaybackState::Paused => draw_glyph(p, rect.expand(3.0), Glyph::Pause, c::LCD_ON),
             PlaybackState::Stopped => draw_glyph(p, rect.expand(3.0), Glyph::Stop, c::LCD_OFF),
+        }
+    }
+
+    fn clutterbar(&self, p: &Painter, origin: Pos2, lit: [bool; 5]) {
+        let font = FontId::monospace(6.5);
+        for ((rect, which), on) in layout::main::clutter_buttons(origin)
+            .iter()
+            .zip(Clutter::ALL)
+            .zip(lit)
+        {
+            let color = if on { c::LCD_ON } else { c::LCD_OFF };
+            p.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                which.letter(),
+                font.clone(),
+                color,
+            );
         }
     }
 

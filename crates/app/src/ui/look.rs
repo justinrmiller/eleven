@@ -65,6 +65,56 @@ pub enum Toggle {
     EqAuto,
 }
 
+/// Clutterbar buttons, top to bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clutter {
+    /// "O": the options menu.
+    Options,
+    /// "A": always on top.
+    AlwaysOnTop,
+    /// "I": file info.
+    FileInfo,
+    /// "D": double size.
+    DoubleSize,
+    /// "V": visualisation mode.
+    Visualization,
+}
+
+impl Clutter {
+    /// All buttons in display order.
+    pub const ALL: [Self; 5] = [
+        Self::Options,
+        Self::AlwaysOnTop,
+        Self::FileInfo,
+        Self::DoubleSize,
+        Self::Visualization,
+    ];
+
+    /// The button's letter.
+    #[must_use]
+    pub fn letter(self) -> &'static str {
+        match self {
+            Self::Options => "O",
+            Self::AlwaysOnTop => "A",
+            Self::FileInfo => "I",
+            Self::DoubleSize => "D",
+            Self::Visualization => "V",
+        }
+    }
+
+    /// Accessible label.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Options => "Options (O)",
+            Self::AlwaysOnTop => "Always on top (A)",
+            Self::FileInfo => "File info (I)",
+            Self::DoubleSize => "Double size (D)",
+            Self::Visualization => "Visualization (V)",
+        }
+    }
+}
+
 /// Colours of the playlist rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlaylistStyle {
@@ -109,6 +159,8 @@ pub trait Look {
     fn clock(&self, p: &Painter, origin: Pos2, clock: &ClockDisplay, blank: bool);
     /// Play/pause/stop indicator.
     fn status(&self, p: &Painter, rect: Rect, state: PlaybackState);
+    /// The clutterbar; `lit[i]` shows button `Clutter::ALL[i]` pressed or active.
+    fn clutterbar(&self, p: &Painter, origin: Pos2, lit: [bool; 5]);
     /// LCD text (title, kbps, kHz).
     fn lcd_text(&self, p: &Painter, rect: Rect, text: &str);
     /// Mono/stereo lights: `None` = nothing loaded.

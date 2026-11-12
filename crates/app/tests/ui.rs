@@ -552,3 +552,46 @@ fn dropping_files_adds_them() {
     assert_eq!(r.app().controller.playlist().len(), 1);
     assert!(r.app().controller.title_text().contains("Added 1"));
 }
+
+#[test]
+fn clutterbar_buttons() {
+    let mut r = rig(2);
+    r.click("Options (O)");
+    r.click("About eleven");
+    assert!(r.app().state.show_about);
+    r.harness.state_mut().state.show_about = false;
+    r.harness.run_steps(2);
+    r.click("Always on top (A)");
+    assert!(r.app().controller.config().always_on_top);
+    r.click("Visualization (V)");
+    assert_eq!(
+        r.app().controller.config().vis_mode,
+        eleven_core::VisMode::Oscilloscope
+    );
+    r.click("Double size (D)");
+    assert!(r.app().controller.config().double_size);
+    r.click("Double size (D)");
+    r.click("1. Fake Artist - Title of 00");
+    r.click("File info (I)");
+    assert_eq!(r.app().state.info, Some(0));
+}
+
+#[test]
+fn equalizer_auto_presets() {
+    let mut r = rig(2);
+    r.click("Play");
+    r.click("Presets");
+    r.click("Save auto-preset for \"00\"");
+    assert!(
+        r.app()
+            .controller
+            .config()
+            .eq_presets
+            .iter()
+            .any(|p| p.name == "00")
+    );
+    r.click("Equalizer auto");
+    assert!(r.app().controller.config().eq_auto);
+    r.click("Equalizer auto");
+    assert!(!r.app().controller.config().eq_auto);
+}

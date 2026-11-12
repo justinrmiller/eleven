@@ -75,6 +75,8 @@ pub struct Config {
     pub playlist_rows: usize,
     /// Equaliser state.
     pub equalizer: EqSettings,
+    /// Load the user preset named after each track's file when it starts (EQ "AUTO").
+    pub eq_auto: bool,
     /// User-saved equaliser presets.
     pub eq_presets: Vec<EqPreset>,
 }
@@ -101,6 +103,7 @@ impl Default for Config {
             current_track: None,
             playlist_rows: 8,
             equalizer: EqSettings::default(),
+            eq_auto: false,
             eq_presets: Vec::new(),
         }
     }

@@ -110,6 +110,22 @@ pub mod main {
     pub fn menu(o: Pos2) -> Rect {
         r(o, 6.0, 3.0, 9.0, 9.0)
     }
+    /// The clutterbar strip left of the clock.
+    #[must_use]
+    pub fn clutterbar(o: Pos2) -> Rect {
+        r(o, 10.0, 22.0, 8.0, 43.0)
+    }
+    /// The five clutterbar buttons (O, A, I, D, V), top to bottom.
+    #[must_use]
+    pub fn clutter_buttons(o: Pos2) -> [Rect; 5] {
+        [
+            r(o, 10.0, 25.0, 8.0, 8.0),
+            r(o, 10.0, 33.0, 8.0, 7.0),
+            r(o, 10.0, 40.0, 8.0, 7.0),
+            r(o, 10.0, 47.0, 8.0, 8.0),
+            r(o, 10.0, 55.0, 8.0, 7.0),
+        ]
+    }
     /// Minimise button.
     #[must_use]
     pub fn minimize(o: Pos2) -> Rect {
@@ -398,6 +414,7 @@ mod tests {
         let mut rects = vec![
             main::title_bar(o),
             main::menu(o),
+            main::clutterbar(o),
             main::minimize(o),
             main::shade(o),
             main::close(o),
@@ -421,6 +438,10 @@ mod tests {
             main::repeat(o),
         ];
         rects.extend(main::transport(o));
+        rects.extend(main::clutter_buttons(o));
+        for b in main::clutter_buttons(o) {
+            assert!(main::clutterbar(o).contains_rect(b));
+        }
         assert!(
             rects.iter().all(|r| main_rect.contains_rect(*r)),
             "main elements inside"

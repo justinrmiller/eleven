@@ -20,6 +20,7 @@ use eleven_skin::sprites::{
 use eleven_skin::{Rgb, Skin};
 
 use super::builtin::Builtin;
+use super::layout::main::clutterbar as clutterbar_rect;
 use super::layout::{self, main as l};
 use super::look::{Glyph, Look, PlaylistStyle, TitleButton, TitleKind, Toggle, VisColors};
 
@@ -217,6 +218,24 @@ impl Look for SkinLook {
         };
         if !self.draw(p, sprite, rect) {
             self.fallback.status(p, rect, state);
+        }
+    }
+
+    fn clutterbar(&self, p: &Painter, origin: Pos2, lit: [bool; 5]) {
+        // Older skins have a narrower titlebar.bmp without a clutterbar; main.bmp shows through.
+        let at = clutterbar_rect(origin).min;
+        if !self.blit(p, title::CLUTTERBAR, at) {
+            return;
+        }
+        for ((sprite, offset), on) in title::CLUTTER_SELECTED
+            .iter()
+            .zip(title::CLUTTER_OFFSETS)
+            .zip(lit)
+        {
+            if on {
+                #[allow(clippy::cast_precision_loss)]
+                self.blit(p, *sprite, at + vec2(0.0, offset as f32));
+            }
         }
     }
 
