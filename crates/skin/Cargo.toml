@@ -4,7 +4,6 @@ description = "Loader for classic .wsz (Winamp 2 / XMMS) skin archives."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 
 [dependencies]
 image.workspace = true

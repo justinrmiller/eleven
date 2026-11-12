@@ -12,6 +12,9 @@ pub const DEFAULT_BARS: usize = 19;
 pub const DEFAULT_FFT_SIZE: usize = 1024;
 /// Level, in dBFS, that maps to an empty bar.
 pub const FLOOR_DB: f32 = -60.0;
+/// Gain added before mapping to bar heights. Broadband music spreads its energy over many bins,
+/// so per-bin levels sit well below a pure tone's; this lifts typical material to mid-height.
+pub const DISPLAY_GAIN_DB: f32 = 12.0;
 /// How fast bars fall, in full heights per second.
 pub const BAR_FALL_RATE: f32 = 2.5;
 /// How long a peak marker holds before falling, in seconds.
@@ -165,7 +168,7 @@ impl Analyzer {
                     .iter()
                     .map(|c| c.norm())
                     .fold(0.0f32, f32::max);
-                let db = 20.0 * (mag * norm).max(1e-9).log10();
+                let db = 20.0 * (mag * norm).max(1e-9).log10() + DISPLAY_GAIN_DB;
                 ((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0)
             })
             .collect()
@@ -295,11 +298,12 @@ mod tests {
     #[test]
     fn quieter_tones_give_lower_bars() {
         let mut a = Analyzer::default();
-        let loud = a.spectrum(&sine(1_000.0, 1.0, 44_100, 1024));
-        let quiet = a.spectrum(&sine(1_000.0, 0.01, 44_100, 1024)); // -40 dB
+        // -20 dBFS and -40 dBFS: both below the clipping point even with the display gain.
+        let loud = a.spectrum(&sine(1_000.0, 0.1, 44_100, 1024));
+        let quiet = a.spectrum(&sine(1_000.0, 0.01, 44_100, 1024));
         let i = argmax(&loud);
         assert!(
-            (loud[i] - quiet[i] - 40.0 / 60.0).abs() < 0.1,
+            (loud[i] - quiet[i] - 20.0 / 60.0).abs() < 0.05,
             "{} {}",
             loud[i],
             quiet[i]

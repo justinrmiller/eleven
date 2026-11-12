@@ -4,7 +4,6 @@ description = "Decoding, DSP, streaming and output engine for the eleven audio p
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 
 [dependencies]
 eleven-core.workspace = true

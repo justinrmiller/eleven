@@ -110,7 +110,8 @@ impl Controller {
             }
         }
         if let Some(err) = this.backend.output_error() {
-            this.show_message(&format!("No audio device ({err}); playing silently"));
+            log::warn!("audio output unavailable: {err}");
+            this.show_message("No audio device - playing silently");
         }
         this.refresh_marquee();
         this
@@ -263,10 +264,8 @@ impl Controller {
         self.backend.drain_vis(&mut self.vis_buffer);
         let playing = self.state() == PlaybackState::Playing;
         if playing && !self.vis_buffer.is_empty() {
-            if let Some(rate) = self.track.as_ref().map(|t| t.sample_rate) {
-                // The tap runs at the device rate; the track rate is a close-enough proxy.
-                self.analyzer.set_sample_rate(rate);
-            }
+            // The visualiser tap runs after resampling, at the device rate.
+            self.analyzer.set_sample_rate(self.backend.output_rate());
             self.analyzer.update(&self.vis_buffer, dt);
             let tail = self.vis_buffer.len().saturating_sub(SCOPE_POINTS * 4);
             self.scope = oscilloscope(&self.vis_buffer[tail..], SCOPE_POINTS);

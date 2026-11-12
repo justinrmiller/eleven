@@ -42,6 +42,8 @@ pub trait Backend {
     fn output_error(&self) -> Option<String>;
     /// Available output device names.
     fn output_devices(&self) -> Vec<String>;
+    /// Sample rate of the output device (the visualiser tap runs at this rate).
+    fn output_rate(&self) -> u32;
 }
 
 /// [`Backend`] backed by the real [`Engine`].
@@ -114,6 +116,9 @@ impl Backend for EngineBackend {
     }
     fn output_devices(&self) -> Vec<String> {
         eleven_audio::list_devices()
+    }
+    fn output_rate(&self) -> u32 {
+        self.engine.output_rate()
     }
 }
 
@@ -380,6 +385,9 @@ pub mod fake {
         fn output_devices(&self) -> Vec<String> {
             vec!["Fake output".to_owned(), "Other output".to_owned()]
         }
+        fn output_rate(&self) -> u32 {
+            44_100
+        }
     }
 
     /// A tag reader that answers immediately with tags derived from the file name.
@@ -477,5 +485,78 @@ pub mod fake {
         fn pick_skin(&mut self, _: Option<&Path>) -> Option<PathBuf> {
             self.skin.clone()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn engine_backend_forwards_to_the_engine() {
+        let engine = Engine::start(
+            &OutputSpec::Null {
+                sample_rate: 48_000,
+                realtime: false,
+            },
+            Arc::new(|| {}),
+        );
+        let mut b = EngineBackend::from_engine(engine);
+        assert_eq!(b.output_rate(), 48_000);
+        assert!(b.output_name().contains("Null"));
+        assert!(b.output_error().is_none());
+        b.set_volume(0.5);
+        b.set_balance(0.1);
+        b.set_eq(&EqSettings {
+            enabled: true,
+            ..EqSettings::default()
+        });
+        b.play(&Location::File(fixture("tone.flac")));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut events = Vec::new();
+        while !events.contains(&PlayerEvent::Finished) && Instant::now() < deadline {
+            events.extend(b.poll_events());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(events.iter().any(|e| matches!(e, PlayerEvent::Started(_))));
+        assert!(events.contains(&PlayerEvent::Finished));
+        let mut vis = Vec::new();
+        b.drain_vis(&mut vis);
+        assert!(!vis.is_empty());
+        b.pause();
+        b.resume();
+        b.seek(Duration::ZERO);
+        b.stop();
+        assert_eq!(b.position(), Duration::ZERO);
+        assert!(!b.state().is_active() || b.state() == PlaybackState::Stopped);
+        assert!(format!("{b:?}").contains("EngineBackend"));
+    }
+
+    #[test]
+    fn scanner_is_a_tag_reader() {
+        let notify: eleven_audio::Notify = Arc::new(|| {});
+        let mut scanner = MetadataScanner::new(1, &notify);
+        let mut playlist = eleven_core::Playlist::new();
+        let id = playlist.push(Location::File(fixture("tone.ogg")));
+        TagReader::request(&mut scanner, id, &fixture("tone.ogg"));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut got = Vec::new();
+        while got.is_empty() && Instant::now() < deadline {
+            got = TagReader::poll(&mut scanner);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(got[0].1.title.as_deref(), Some("Test Tone"));
+        let mut none = NoMediaControls;
+        assert!(none.poll().is_empty());
+        none.set_metadata("x", None, None);
+        none.set_playback(PlaybackState::Playing, Duration::ZERO);
     }
 }

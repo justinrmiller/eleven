@@ -58,8 +58,8 @@ pub struct UiState {
     pub skin_error: Option<String>,
     /// Files are being dragged over the window.
     pub drop_hover: bool,
-    last_size: Option<Vec2>,
-    last_zoom: Option<f32>,
+    /// Last window size sent, with the zoom it was sent at.
+    last_size: Option<(Vec2, f32)>,
     last_on_top: Option<bool>,
     last_decorations: Option<bool>,
 }
@@ -305,16 +305,18 @@ impl ElevenApp {
     fn sync_window(&mut self, ctx: &Context) {
         let cfg = self.controller.config();
         let zoom = if cfg.double_size { 2.0 } else { 1.0 };
-        if self.state.last_zoom != Some(zoom) {
+        if (ctx.zoom_factor() - zoom).abs() > f32::EPSILON {
+            // A zoom change only takes effect at the end of the pass, and window sizes are
+            // converted with the zoom in force then: resize on the next pass instead.
             ctx.set_zoom_factor(zoom);
-            self.state.last_zoom = Some(zoom);
+            return;
         }
         let size = Frame::compute(egui::Pos2::ZERO, self.sections()).size();
-        if self.state.last_size != Some(size) {
+        if self.state.last_size != Some((size, zoom)) {
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
             ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(size));
             ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(size));
-            self.state.last_size = Some(size);
+            self.state.last_size = Some((size, zoom));
         }
         let cfg = self.controller.config();
         if self.state.last_on_top != Some(cfg.always_on_top) {

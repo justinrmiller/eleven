@@ -2,7 +2,7 @@
 CARGO ?= cargo
 # Files that need real audio hardware or a desktop session; excluded from the coverage gate.
 COV_IGNORE := (cpal_out|media_keys|main)\.rs$$
-COV_MIN ?= 80
+COV_MIN ?= 90
 
 .PHONY: help all build run release test lint fmt clippy cov cov-html fixtures bundle-macos clean
 

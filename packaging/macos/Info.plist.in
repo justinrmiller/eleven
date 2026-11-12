@@ -27,6 +27,6 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>MIT licensed. It goes to eleven.</string>
+    <string>It goes to eleven.</string>
 </dict>
 </plist>

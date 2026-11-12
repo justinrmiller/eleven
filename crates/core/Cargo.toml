@@ -4,7 +4,6 @@ description = "Pure, I/O-free logic for the eleven audio player: playlists, EQ m
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 
 [dependencies]
 fastrand.workspace = true
