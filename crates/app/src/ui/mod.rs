@@ -217,6 +217,8 @@ impl ElevenApp {
     /// After minimizing, wait for the window to lose focus (it was minimized) and then get it
     /// back (it was restored), and clear the mark. Elsewhere eframe refreshes the mark itself,
     /// which ends the watch.
+    ///
+    /// Remove once eframe fixes this: see "Workarounds to remove" in `AGENTS.md`.
     fn clear_stale_minimized(&mut self, ctx: &Context) {
         let Some(lost_focus) = self.state.minimized_lost_focus else {
             return;
