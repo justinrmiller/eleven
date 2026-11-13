@@ -8,6 +8,7 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use eleven_app::backend::fake::{FakeBackend, FakeChooser, FakeMediaControls, FakeState, FakeTags};
+use eleven_app::ui::actions::Action;
 use eleven_app::{Controller, ElevenApp, Persistence};
 use eleven_core::{Config, Location, PlaybackState, PlayerEvent, TrackInfo};
 
@@ -390,6 +391,51 @@ fn playback_advances_while_the_window_is_hidden() {
     backend.lock().unwrap().events.push(PlayerEvent::Finished);
     eframe::App::logic(&mut app, &ctx, &mut eframe::Frame::_new_kittest());
     assert_eq!(backend.lock().unwrap().plays(), [file(0), file(1)]);
+}
+
+#[test]
+fn restoring_a_minimized_window_brings_the_ui_back() {
+    use egui::{ViewportCommand, ViewportId, ViewportInfo};
+    // Mimics eframe on macOS: after `Minimized(true)` its viewport info keeps saying
+    // "minimized" even once the window is restored, and while it does eframe only calls
+    // `App::logic` (via `Context::run_logic`), never the UI.
+    let (mut app, _backend) = app(Config::default(), 1, FakeChooser::default(), None);
+    let ctx = egui::Context::default();
+    let frame = |focused: bool| {
+        let info = ViewportInfo {
+            minimized: Some(true),
+            occluded: Some(false),
+            focused: Some(focused),
+            ..ViewportInfo::default()
+        };
+        egui::RawInput {
+            viewports: std::iter::once((ViewportId::ROOT, info)).collect(),
+            focused,
+            ..egui::RawInput::default()
+        }
+    };
+    let commands = |app: &mut ElevenApp, focused: bool| {
+        ctx.run_logic(&frame(focused), |ctx| app.tick(ctx))
+            .viewport_commands
+            .remove(&ViewportId::ROOT)
+            .unwrap_or_default()
+    };
+    let restore = ViewportCommand::Minimized(false);
+
+    // Without our minimize nothing is touched.
+    assert!(!commands(&mut app, true).contains(&restore));
+    let minimize = ctx.run_logic(&frame(true), |ctx| app.apply(ctx, Action::Minimize));
+    assert!(
+        minimize.viewport_commands[&ViewportId::ROOT].contains(&ViewportCommand::Minimized(true))
+    );
+    // Still focused right after the click: the window has not gone yet.
+    assert!(!commands(&mut app, true).contains(&restore));
+    // Minimized: focus is gone.
+    assert!(!commands(&mut app, false).contains(&restore));
+    assert!(!commands(&mut app, false).contains(&restore));
+    // Restored from the Dock: focused again, so the stale mark is cleared once.
+    assert!(commands(&mut app, true).contains(&restore));
+    assert!(!commands(&mut app, true).contains(&restore));
 }
 
 #[test]

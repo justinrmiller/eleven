@@ -66,6 +66,9 @@ pub struct UiState {
     pub skin_error: Option<String>,
     /// Files are being dragged over the window.
     pub drop_hover: bool,
+    /// Set after the minimize button is used: whether the window has lost focus since (see
+    /// [`ElevenApp::clear_stale_minimized`]).
+    minimized_lost_focus: Option<bool>,
     /// Last window size sent, with the zoom it was sent at.
     last_size: Option<(Vec2, f32)>,
     last_on_top: Option<bool>,
@@ -185,6 +188,7 @@ impl ElevenApp {
     /// and timers. Call it once per frame before [`ElevenApp::show`], and also while the window
     /// is hidden (eframe's `App::logic`).
     pub fn tick(&mut self, ctx: &Context) {
+        self.clear_stale_minimized(ctx);
         // While the window is hidden, the input time stays at the last shown frame, so dt is
         // zero: timers pause, but events are still handled.
         let now = ctx.input(|i| i.time);
@@ -203,6 +207,36 @@ impl ElevenApp {
             _ => Duration::from_millis(100),
         };
         ctx.request_repaint_after(interval);
+    }
+
+    /// Works around eframe on macOS: `ViewportCommand::Minimized(true)` marks the window as
+    /// minimized, but on macOS eframe never reads the real state back, so the mark outlives
+    /// the user restoring the window from the Dock. eframe neither paints nor handles input
+    /// while the mark is set, which leaves a frozen window that ignores clicks.
+    ///
+    /// After minimizing, wait for the window to lose focus (it was minimized) and then get it
+    /// back (it was restored), and clear the mark. Elsewhere eframe refreshes the mark itself,
+    /// which ends the watch.
+    fn clear_stale_minimized(&mut self, ctx: &Context) {
+        let Some(lost_focus) = self.state.minimized_lost_focus else {
+            return;
+        };
+        let (minimized, focused) = ctx.input(|i| (i.viewport().minimized, i.viewport().focused));
+        if minimized != Some(true) {
+            self.state.minimized_lost_focus = None;
+            return;
+        }
+        match focused {
+            Some(false) => self.state.minimized_lost_focus = Some(true),
+            Some(true) if lost_focus => {
+                // Only clears the mark: the window is already restored, so this is a no-op
+                // for the window itself.
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+                ctx.request_repaint();
+                self.state.minimized_lost_focus = None;
+            }
+            _ => {}
+        }
     }
 
     /// Draws one frame and handles input. [`ElevenApp::tick`] runs the player itself.
@@ -444,7 +478,10 @@ impl ElevenApp {
                     self.set_skin(ctx, Some(path));
                 }
             }
-            Action::Minimize => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+            Action::Minimize => {
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                self.state.minimized_lost_focus = Some(false);
+            }
             Action::Quit => {
                 self.persist();
                 self.quit_requested = true;
