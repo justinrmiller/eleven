@@ -52,21 +52,29 @@ install -Dm644 packaging/icon-256.png ~/.local/share/icons/hicolor/256x256/apps/
 
 ## Releases
 
-Pushing a version tag builds and publishes a GitHub release (`.github/workflows/release.yml`):
+Pushing a version tag runs the tests, builds the packages and publishes a GitHub release (`.github/workflows/release.yml`):
 
 ```sh
-# bump `version` in Cargo.toml first; the tag must match it
-git tag v0.2.0 && git push origin v0.2.0
+# 1. bump `version` in Cargo.toml, then refresh the lockfile so the two agree
+cargo update --workspace
+git commit -am "Release 0.2.0"
+# 2. tag it; the tag must match the version
+git tag v0.2.0 && git push origin main v0.2.0
 ```
 
 | Platform | Files |
 |---|---|
 | macOS 11+ | universal (Apple Silicon + Intel) `eleven.app` as `.dmg` and `.zip` |
-| Linux x86_64 and ARM64 | `.deb` for Debian/Ubuntu, and a `.tar.gz` (built on Ubuntu 22.04, glibc 2.35+) |
+| Linux x86_64 and ARM64 | `.deb` for Debian/Ubuntu, and a `.tar.gz` (built on Ubuntu 22.04, so glibc 2.35+) |
 
-A `SHA256SUMS.txt` is attached too. Tags with a hyphen (`v0.2.0-beta.1`) become pre-releases. **Run workflow** on the Actions tab builds the packages without publishing. Locally, `make dist-macos` and `make dist-linux` produce the same files in `dist/`.
+- **Extras:** a `SHA256SUMS.txt` is attached too, and tags with a hyphen (`v0.2.0-beta.1`) become pre-releases.
+- **Test builds:** **Run workflow** on the Actions tab tests and builds the packages without ever publishing.
+- **Local builds:** `make dist-macos` and `make dist-linux` produce the same kinds of files in `dist/`. The `.deb`'s dependencies are computed from the binary, so a package built on a newer distro requires that distro's glibc.
 
-The macOS app is ad-hoc signed but not notarized, so Gatekeeper blocks the first launch: right-click it and choose **Open**. Notarization needs an Apple Developer ID certificate stored as repository secrets.
+**macOS security warning.** The app is ad-hoc signed but not notarized, so Gatekeeper blocks the first launch.
+- **macOS 15 or later:** open System Settings → Privacy & Security and click **Open Anyway**.
+- **macOS 14 and earlier:** right-click the app and choose **Open**.
+- **To remove the warning entirely:** notarization needs an Apple Developer ID certificate stored as repository secrets.
 
 ## Keyboard shortcuts
 

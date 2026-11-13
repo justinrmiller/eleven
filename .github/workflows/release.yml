@@ -1,16 +1,19 @@
 name: Release
 
-# Push a version tag to publish a release:
+# Push a version tag to test, build and publish a release:
 #   git tag v0.2.0 && git push origin v0.2.0
-# The tag must match `version` in Cargo.toml. "Run workflow" (workflow_dispatch) builds the
-# packages as workflow artifacts without publishing anything.
+# The tag must match eleven's version in Cargo.toml *and* Cargo.lock (after bumping `version`,
+# run `cargo update --workspace`). "Run workflow" (workflow_dispatch) tests and builds the
+# packages as workflow artifacts and never publishes, whichever ref it runs on.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
+# Build jobs run third-party build scripts, so they only get read access; `publish` alone may
+# write.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -21,27 +24,51 @@ env:
 
 jobs:
   version:
-    name: check tag matches Cargo.toml
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: check tag matches Cargo.toml and Cargo.lock
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain
+        run: rustup toolchain install
       - name: Compare versions
         run: |
+          crate="$(./scripts/version.sh)"
           tag="${GITHUB_REF_NAME#v}"
-          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
           if [ "$tag" != "$crate" ]; then
-            echo "::error::Tag v$tag does not match Cargo.toml version $crate"
+            echo "::error::Tag v$tag does not match eleven's version $crate"
             exit 1
           fi
 
+  test:
+    name: tests
+    needs: version
+    # Runs after `version` passes, or straight away when `version` is skipped (manual runs).
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - name: Install pinned toolchain
+        run: rustup toolchain install
+      - name: Test
+        run: cargo test --workspace --locked
+
   linux:
     name: Linux ${{ matrix.arch }} (.tar.gz, .deb)
+    needs: version
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Built on the oldest supported Ubuntu so the binary runs on older glibc versions too.
+          # The oldest supported Ubuntu, so the binary runs on older glibc versions too.
           - runner: ubuntu-22.04
             arch: x86_64
           # Native ARM64 runner (free for public repositories).
@@ -51,8 +78,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config curl
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config dpkg-dev curl
       - name: Install pinned toolchain
         run: |
           # The ARM images may not ship rustup; install it if needed.
@@ -63,9 +92,8 @@ jobs:
           fi
           rustup toolchain install
           rustc -vV
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-linux-${{ matrix.arch }}
+      # No build cache here: tag runs could only save caches scoped to that tag, which nothing
+      # reuses but which still count against the repository's cache quota.
       - name: Package
         run: ./scripts/package-linux.sh
       - uses: actions/upload-artifact@v4
@@ -78,17 +106,18 @@ jobs:
 
   macos:
     name: macOS universal (.dmg, .zip)
+    needs: version
+    if: ${{ !failure() && !cancelled() }}
     runs-on: macos-latest
     timeout-minutes: 45
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Install pinned toolchain
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-macos
       - name: Package
         run: ./scripts/package-macos.sh
       - name: Check the bundle
@@ -107,9 +136,12 @@ jobs:
 
   publish:
     name: publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [version, linux, macos]
+    # Only a pushed tag publishes; manual runs on a tag ref only build.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [version, test, linux, macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -133,7 +165,14 @@ jobs:
             | Linux ARM64, Debian/Ubuntu (e.g. Raspberry Pi OS 64-bit) | `eleven_*_arm64.deb` |
             | Linux, other distros | `eleven-*-linux-x86_64.tar.gz` or `eleven-*-linux-aarch64.tar.gz` |
 
-            **macOS:** the app is not notarized yet, so the first launch is blocked. Right-click
-            `eleven.app` and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/eleven.app`.
+            Linux packages need glibc 2.35 or newer (Ubuntu 22.04, Debian 12 and later).
 
-            Verify downloads with `sha256sum -c SHA256SUMS.txt`.
+            **macOS:** the app is not notarized, so macOS blocks the first launch. On macOS 15 or
+            later, open **System Settings → Privacy & Security**, scroll down to the message about
+            eleven and click **Open Anyway**. On macOS 14 and earlier, right-click `eleven.app`
+            and choose **Open**. Either way, `xattr -dr com.apple.quarantine /Applications/eleven.app`
+            also works.
+
+            **Verify a download** against `SHA256SUMS.txt` (files you didn't download are skipped):
+            `sha256sum -c --ignore-missing SHA256SUMS.txt` on Linux, or
+            `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` on macOS.

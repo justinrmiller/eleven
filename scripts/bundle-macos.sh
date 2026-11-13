@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build dist/eleven.app from a release build. macOS only (needs sips + iconutil for the icon).
+# Build dist/eleven.app with the `dist` profile (a stripped release build). macOS only.
 #   --universal   build for Apple Silicon and Intel and merge them with lipo
 set -euo pipefail
 
@@ -15,23 +15,24 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+version="$(./scripts/version.sh)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
 if $universal; then
-  for target in aarch64-apple-darwin x86_64-apple-darwin; do
-    rustup target add "$target" >/dev/null
-    cargo build -p eleven --release --locked --target "$target"
-  done
-  bin="target/universal/eleven"
-  mkdir -p "$(dirname "$bin")"
+  rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+  # One cargo invocation for both targets lets the two builds overlap.
+  cargo build -p eleven --profile dist --locked \
+    --target aarch64-apple-darwin --target x86_64-apple-darwin
+  bin="$tmp/eleven"
   lipo -create -output "$bin" \
-    target/aarch64-apple-darwin/release/eleven target/x86_64-apple-darwin/release/eleven
+    target/aarch64-apple-darwin/dist/eleven target/x86_64-apple-darwin/dist/eleven
 else
-  cargo build -p eleven --release --locked
-  bin="target/release/eleven"
+  cargo build -p eleven --profile dist --locked
+  bin="target/dist/eleven"
 fi
 
-version="$(cargo pkgid -p eleven | sed 's/.*[#@]//')"
 app="dist/eleven.app"
-
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/eleven"
@@ -39,7 +40,7 @@ sed "s/@VERSION@/${version}/g" packaging/macos/Info.plist.in > "$app/Contents/In
 
 # Convert the 1024px PNG icon into an .icns file if it is present.
 if [[ -f packaging/icon.png ]]; then
-  iconset="$(mktemp -d)/eleven.iconset"
+  iconset="$tmp/eleven.iconset"
   mkdir -p "$iconset"
   for size in 16 32 128 256 512; do
     sips -z "$size" "$size" packaging/icon.png --out "$iconset/icon_${size}x${size}.png" >/dev/null

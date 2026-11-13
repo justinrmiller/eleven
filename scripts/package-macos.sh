@@ -6,15 +6,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+version="$(./scripts/version.sh)"
 ./scripts/bundle-macos.sh --universal
 
-version="$(cargo pkgid -p eleven | sed 's/.*[#@]//')"
 base="dist/eleven-${version}-macos-universal"
 rm -f "${base}.zip" "${base}.dmg"
 
 ditto -c -k --keepParent dist/eleven.app "${base}.zip"
 
-staging="$(mktemp -d)/eleven"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+staging="$tmp/eleven"
 mkdir -p "$staging"
 cp -R dist/eleven.app "$staging/"
 ln -s /Applications "$staging/Applications"
