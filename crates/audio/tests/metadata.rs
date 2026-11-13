@@ -67,7 +67,10 @@ fn scanner_reports_results_by_entry_id() {
     // Workers notify right after sending each result, so the last call can trail `wait`.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while notified.load(std::sync::atomic::Ordering::Relaxed) < 2 {
-        assert!(std::time::Instant::now() < deadline, "notify was not called per result");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "notify was not called per result"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(format!("{scanner:?}").contains("MetadataScanner"));
