@@ -38,7 +38,7 @@ fn wait_for(engine: &Engine, pred: impl Fn(&PlayerEvent) -> bool) -> Vec<PlayerE
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut seen = Vec::new();
     while Instant::now() < deadline {
-        if let Some(e) = engine.wait_event(Duration::from_millis(50)) {
+        if let Some((_, e)) = engine.wait_event(Duration::from_millis(50)) {
             let done = pred(&e);
             seen.push(e);
             if done {
@@ -139,4 +139,93 @@ fn stop_interrupts_a_stalled_stream() {
         !events.iter().any(|e| matches!(e, PlayerEvent::Error(_))),
         "a user stop is not an error: {events:?}"
     );
+}
+
+/// A server that accepts connections but never sends a response.
+fn silent_server() -> (TcpListener, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/live.mp3", listener.local_addr().unwrap());
+    (listener, url)
+}
+
+#[test]
+fn stop_interrupts_a_pending_connect() {
+    let (_listener, url) = silent_server();
+    let engine = engine();
+    engine.play(Location::Url(url));
+    // Let the worker get stuck waiting for response headers.
+    std::thread::sleep(Duration::from_millis(200));
+    let start = Instant::now();
+    engine.stop();
+    engine.play(Location::File(fixture("tone.wav")));
+    let events = wait_for(&engine, |e| matches!(e, PlayerEvent::Started(_)));
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "the next track waited {:?} for the connect",
+        start.elapsed()
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, PlayerEvent::Error(_))),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn quitting_during_a_pending_connect_is_prompt() {
+    let (_listener, url) = silent_server();
+    let engine = engine();
+    engine.play(Location::Url(url));
+    std::thread::sleep(Duration::from_millis(200));
+    let start = Instant::now();
+    drop(engine);
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn events_of_a_replaced_stream_keep_its_generation() {
+    let audio = std::fs::read(fixture("tone.mp3")).unwrap();
+    let body = icy::interleave(&audio, 1_024, |i| Some(format!("StreamTitle='Song {i}';")));
+    let url = serve_once(move |mut s| {
+        let head = "HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\nicy-metaint: 1024\r\n\r\n";
+        let _ = s.write_all(head.as_bytes());
+        let _ = s.write_all(&body);
+    });
+    let engine = engine();
+    let stream = engine.play(Location::Url(url));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut stream_events = 0;
+    loop {
+        assert!(Instant::now() < deadline, "no stream title");
+        if let Some((generation, e)) = engine.wait_event(Duration::from_millis(50))
+            && matches!(e, PlayerEvent::StreamTitle(_))
+        {
+            assert_eq!(generation, stream);
+            stream_events += 1;
+            break;
+        }
+    }
+    let file = engine.play(Location::File(fixture("tone.wav")));
+    assert!(file > stream);
+    loop {
+        assert!(Instant::now() < deadline, "file did not finish");
+        let Some((generation, e)) = engine.wait_event(Duration::from_millis(50)) else {
+            continue;
+        };
+        match e {
+            PlayerEvent::StreamTitle(_) | PlayerEvent::Buffering(_) => {
+                assert_eq!(
+                    generation, stream,
+                    "stream events keep the stream's generation"
+                );
+                stream_events += 1;
+            }
+            PlayerEvent::Finished if generation == file => break,
+            _ => {}
+        }
+    }
+    assert!(stream_events >= 1);
 }

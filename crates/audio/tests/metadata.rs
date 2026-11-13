@@ -64,6 +64,11 @@ fn scanner_reports_results_by_entry_id() {
     assert_eq!(found.1.title.as_deref(), Some("Test Tone"));
     let missing = results.iter().find(|(id, _)| *id == b).unwrap();
     assert_eq!(missing.1, TagInfo::default());
-    assert!(notified.load(std::sync::atomic::Ordering::Relaxed) >= 2);
+    // Workers notify right after sending each result, so the last call can trail `wait`.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while notified.load(std::sync::atomic::Ordering::Relaxed) < 2 {
+        assert!(std::time::Instant::now() < deadline, "notify was not called per result");
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(format!("{scanner:?}").contains("MetadataScanner"));
 }

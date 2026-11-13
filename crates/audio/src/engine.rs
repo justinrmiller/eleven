@@ -2,6 +2,10 @@
 //!
 //! [`Engine`] is the handle the application talks to. Transport commands travel over a channel;
 //! volume, balance and position use shared atomics so they respond instantly.
+//!
+//! Every [`Engine::play`] returns a *generation* number, and every event carries the
+//! generation of the play request it belongs to. Events can still be in flight when the next
+//! track starts, so the application uses the generation to ignore stale ones.
 
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,10 +26,14 @@ const FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 /// Poll interval while the ring buffer is full or draining.
 const BUSY_WAIT: Duration = Duration::from_millis(5);
 
+/// An engine event tagged with the generation of the [`Engine::play`] call it belongs to.
+pub type TaggedEvent = (u64, PlayerEvent);
+
 /// Messages from the handle to the worker thread.
 #[derive(Debug, Clone)]
 enum Command {
-    Play(Location),
+    /// Play a location; the number is its generation (the new interrupt epoch).
+    Play(Location, u64),
     Pause,
     Resume,
     Stop,
@@ -38,7 +46,7 @@ enum Command {
 impl Command {
     /// Commands that make any earlier `Play` in the same batch irrelevant.
     fn supersedes_play(&self) -> bool {
-        matches!(self, Self::Play(_) | Self::Stop | Self::Shutdown)
+        matches!(self, Self::Play(..) | Self::Stop | Self::Shutdown)
     }
 }
 
@@ -47,10 +55,14 @@ impl Command {
 struct Status {
     state: AtomicU8,
     base_micros: AtomicU64,
+    /// Position reported while a seek or device switch rebuilds the clock (micros + 1; 0 =
+    /// none), so readers never see a half-updated base / frame count.
+    held_micros: AtomicU64,
     output_rate: AtomicU32,
     output_name: Mutex<String>,
     output_error: Mutex<Option<String>>,
-    /// Bumped by the handle on every transport command so blocked network reads can abort.
+    /// Bumped by the handle on every Play, Stop and Shutdown so blocked network operations can
+    /// abort. A Play's new value is its generation.
     interrupt: Arc<AtomicU64>,
 }
 
@@ -76,12 +88,28 @@ impl Status {
         let micros = u64::try_from(position.as_micros()).unwrap_or(u64::MAX);
         self.base_micros.store(micros, Ordering::Release);
     }
+
+    fn hold(&self, position: Option<Duration>) {
+        let v = position.map_or(0, |p| {
+            u64::try_from(p.as_micros())
+                .unwrap_or(u64::MAX - 1)
+                .saturating_add(1)
+        });
+        self.held_micros.store(v, Ordering::Release);
+    }
+
+    fn held(&self) -> Option<Duration> {
+        match self.held_micros.load(Ordering::Acquire) {
+            0 => None,
+            v => Some(Duration::from_micros(v - 1)),
+        }
+    }
 }
 
 /// Handle to the playback engine. Dropping it stops playback and joins the worker.
 pub struct Engine {
     commands: Sender<Command>,
-    events: Receiver<PlayerEvent>,
+    events: Receiver<TaggedEvent>,
     shared: Arc<Shared>,
     status: Arc<Status>,
     vis: Arc<Mutex<Option<rtrb::Consumer<f32>>>>,
@@ -137,16 +165,24 @@ impl Engine {
         }
     }
 
+    /// Advances the interrupt epoch, aborting blocked network operations; returns the new value.
+    fn interrupt(&self) -> u64 {
+        self.status.interrupt.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     fn send(&self, cmd: Command) {
         if cmd.supersedes_play() {
-            self.status.interrupt.fetch_add(1, Ordering::AcqRel);
+            self.interrupt();
         }
         let _ = self.commands.send(cmd);
     }
 
-    /// Starts playing `location` (stopping whatever was playing).
-    pub fn play(&self, location: Location) {
-        self.send(Command::Play(location));
+    /// Starts playing `location` (stopping whatever was playing). Returns the generation that
+    /// tags this track's events.
+    pub fn play(&self, location: Location) -> u64 {
+        let generation = self.interrupt();
+        let _ = self.commands.send(Command::Play(location, generation));
+        generation
     }
 
     /// Pauses playback.
@@ -201,20 +237,23 @@ impl Engine {
         if self.state() == PlaybackState::Stopped {
             return Duration::ZERO;
         }
+        if let Some(held) = self.status.held() {
+            return held;
+        }
         let base = Duration::from_micros(self.status.base_micros.load(Ordering::Acquire));
         let rate = self.status.output_rate.load(Ordering::Acquire);
         base + frames_to_duration(self.shared.frames_played(), rate)
     }
 
-    /// Takes all pending events.
+    /// Takes all pending events, each tagged with its generation (see [`Engine::play`]).
     #[must_use]
-    pub fn poll_events(&self) -> Vec<PlayerEvent> {
+    pub fn poll_events(&self) -> Vec<TaggedEvent> {
         self.events.try_iter().collect()
     }
 
     /// Waits up to `timeout` for the next event (useful in tests and tools).
     #[must_use]
-    pub fn wait_event(&self, timeout: Duration) -> Option<PlayerEvent> {
+    pub fn wait_event(&self, timeout: Duration) -> Option<TaggedEvent> {
         self.events.recv_timeout(timeout).ok()
     }
 
@@ -274,6 +313,15 @@ impl Drop for Engine {
     }
 }
 
+/// A converter from `from` Hz to `to` Hz, or `None` when the rates already match.
+fn resampler_for(from: u32, to: u32) -> crate::Result<Option<StreamResampler>> {
+    if from == to {
+        Ok(None)
+    } else {
+        StreamResampler::new(from, to).map(Some)
+    }
+}
+
 /// Opens the requested output, falling back to a silent real-time output on failure.
 fn open_output(
     spec: &OutputSpec,
@@ -309,9 +357,25 @@ fn open_output(
     (out, producer)
 }
 
+/// Stands in for the output while a device switch closes the old one.
+struct Detached(u32);
+
+impl Output for Detached {
+    fn sample_rate(&self) -> u32 {
+        self.0
+    }
+    fn name(&self) -> String {
+        String::new()
+    }
+}
+
 /// The track being played.
 struct Current {
     decoder: Decoder,
+    /// Sample rate the resampler was built for; chained streams can change it mid-track.
+    source_rate: u32,
+    /// Source channel count, to notice channel-layout changes in chained streams.
+    channels: u16,
     resampler: Option<StreamResampler>,
     eq: Equalizer,
     decoded: Vec<f32>,
@@ -319,7 +383,7 @@ struct Current {
     pending_pos: usize,
     eof: bool,
     paused: bool,
-    /// Interrupt epoch when the track started (see [`Worker::superseded`]).
+    /// The track's generation, which is also its interrupt epoch (see [`Worker::superseded`]).
     epoch: u64,
 }
 
@@ -335,7 +399,7 @@ enum Step {
 
 struct Worker {
     commands: Receiver<Command>,
-    events: Sender<PlayerEvent>,
+    events: Sender<TaggedEvent>,
     notify: Notify,
     shared: Arc<Shared>,
     status: Arc<Status>,
@@ -347,8 +411,8 @@ struct Worker {
 }
 
 impl Worker {
-    fn emit(&self, event: PlayerEvent) {
-        let _ = self.events.send(event);
+    fn emit(&self, generation: u64, event: PlayerEvent) {
+        let _ = self.events.send((generation, event));
         (self.notify)();
     }
 
@@ -381,12 +445,14 @@ impl Worker {
         let last_superseding = batch.iter().rposition(Command::supersedes_play);
         for (i, cmd) in batch.into_iter().enumerate() {
             match cmd {
-                Command::Play(_) if last_superseding.is_some_and(|l| l > i) => {}
-                Command::Play(location) => self.start(&location),
+                Command::Play(..) if last_superseding.is_some_and(|l| l > i) => {}
+                Command::Play(location, generation) => self.start(&location, generation),
                 Command::Pause => self.set_paused(true),
                 Command::Resume => self.set_paused(false),
                 Command::Stop => self.stop_playback(),
-                Command::Seek(pos) => self.seek(pos),
+                Command::Seek(pos) => {
+                    self.seek(pos);
+                }
                 Command::SetEq(settings) => {
                     self.eq = settings;
                     if let Some(cur) = &mut self.current {
@@ -409,16 +475,15 @@ impl Worker {
         self.status.interrupt.load(Ordering::Acquire) != epoch
     }
 
-    fn start(&mut self, location: &Location) {
+    fn start(&mut self, location: &Location, epoch: u64) {
         self.stop_playback();
-        let epoch = self.status.interrupt.load(Ordering::Acquire);
         let opened = match location {
             Location::File(path) => Decoder::open_file(path),
             Location::Url(url) => {
                 let events = self.events.clone();
                 let notify = Arc::clone(&self.notify);
                 let on_event: stream::OnEvent = Arc::new(move |e| {
-                    let _ = events.send(e);
+                    let _ = events.send((epoch, e));
                     notify();
                 });
                 stream::open_decoder(url, Arc::clone(&self.status.interrupt), epoch, on_event)
@@ -429,20 +494,17 @@ impl Worker {
             // A newer command (e.g. Stop while buffering) aborted the open: not an error.
             Err(_) if self.superseded(epoch) => return,
             Err(e) => {
-                self.emit(PlayerEvent::Error(e.to_string()));
+                self.emit(epoch, PlayerEvent::Error(e.to_string()));
                 return;
             }
         };
         let out_rate = self.output.sample_rate();
-        let resampler = if decoder.sample_rate() == out_rate {
-            None
-        } else {
-            match StreamResampler::new(decoder.sample_rate(), out_rate) {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    self.emit(PlayerEvent::Error(e.to_string()));
-                    return;
-                }
+        let source_rate = decoder.sample_rate();
+        let resampler = match resampler_for(source_rate, out_rate) {
+            Ok(r) => r,
+            Err(e) => {
+                self.emit(epoch, PlayerEvent::Error(e.to_string()));
+                return;
             }
         };
         let mut eq = Equalizer::new(out_rate);
@@ -452,7 +514,9 @@ impl Worker {
         self.status.set_base(Duration::ZERO);
         self.shared.set_paused(false);
         self.current = Some(Current {
+            channels: decoder.info().channels,
             decoder,
+            source_rate,
             resampler,
             eq,
             decoded: Vec::new(),
@@ -463,7 +527,7 @@ impl Worker {
             epoch,
         });
         self.status.set_state(PlaybackState::Playing);
-        self.emit(PlayerEvent::Started(info));
+        self.emit(epoch, PlayerEvent::Started(info));
     }
 
     fn stop_playback(&mut self) {
@@ -487,12 +551,14 @@ impl Worker {
         }
     }
 
-    fn seek(&mut self, position: Duration) {
+    /// Seeks the current track; returns `false` if there is none or it cannot seek.
+    fn seek(&mut self, position: Duration) -> bool {
         let Some(cur) = &mut self.current else {
-            return;
+            return false;
         };
         match cur.decoder.seek(position) {
             Ok(actual) => {
+                self.status.hold(Some(actual));
                 cur.pending.clear();
                 cur.pending_pos = 0;
                 cur.eof = false;
@@ -502,37 +568,68 @@ impl Worker {
                 cur.eq.reset();
                 self.shared.flush(FLUSH_TIMEOUT);
                 self.status.set_base(actual);
+                self.status.hold(None);
+                true
             }
-            Err(e) => log::debug!("seek ignored: {e}"),
+            Err(e) => {
+                log::debug!("seek ignored: {e}");
+                false
+            }
         }
     }
 
     fn switch_output(&mut self, spec: &OutputSpec) {
-        // Restart the current track on the new device at the same position.
+        // Continue the current track on the new device from what was actually heard.
         let resume = self
             .current
             .as_ref()
             .map(|c| (c.paused, self.position_estimate()));
+        self.status.hold(resume.map(|(_, position)| position));
+        // Release the old device before opening the new one: ALSA refuses to open a card that
+        // is still in use (e.g. `hw:` -> `plughw:` on the same card).
+        let rate = self.output.sample_rate();
+        drop(std::mem::replace(
+            &mut self.output,
+            Box::new(Detached(rate)),
+        ));
         let (out, producer) = open_output(spec, &self.shared, &self.status, &self.vis);
-        // Drop the old output before installing the new one.
         self.output = out;
         self.producer = producer;
+        let out_rate = self.output.sample_rate();
+        let Some((paused, position)) = resume else {
+            return;
+        };
+        self.resume_on_new_output(paused, position, out_rate);
+        self.status.hold(None);
+    }
+
+    /// Continues the current track at `position` after the output changed to `out_rate` Hz.
+    fn resume_on_new_output(&mut self, paused: bool, position: Duration, out_rate: u32) {
+        let generation = self.current.as_ref().map_or(0, |c| c.epoch);
         if let Some(cur) = &mut self.current {
-            let out_rate = self.output.sample_rate();
-            cur.resampler = if cur.decoder.sample_rate() == out_rate {
-                None
-            } else {
-                StreamResampler::new(cur.decoder.sample_rate(), out_rate).ok()
-            };
+            match resampler_for(cur.source_rate, out_rate) {
+                Ok(r) => cur.resampler = r,
+                Err(e) => {
+                    let msg = e.to_string();
+                    self.stop_playback();
+                    self.emit(generation, PlayerEvent::Error(msg));
+                    return;
+                }
+            }
             cur.eq.set_sample_rate(out_rate);
-            cur.pending.clear();
-            cur.pending_pos = 0;
         }
-        if let Some((paused, pos)) = resume {
-            self.status.set_base(pos);
+        // The old ring buffer and pending samples are gone: re-seek so nothing is skipped.
+        // Live streams cannot seek; they just continue with the clock carried over.
+        if !self.seek(position) {
+            if let Some(cur) = &mut self.current {
+                cur.pending.clear();
+                cur.pending_pos = 0;
+                cur.eq.reset();
+            }
             self.shared.flush(FLUSH_TIMEOUT);
-            self.set_paused(paused);
+            self.status.set_base(position);
         }
+        self.set_paused(paused);
     }
 
     fn position_estimate(&self) -> Duration {
@@ -570,11 +667,36 @@ impl Worker {
             cur.decoded.clear();
             match cur.decoder.decode_next(&mut cur.decoded) {
                 Ok(true) => {
+                    let rate = cur.decoder.sample_rate();
+                    let channels = cur.decoder.info().channels;
+                    let format_changed = rate != cur.source_rate || channels != cur.channels;
+                    cur.channels = channels;
+                    if rate != cur.source_rate {
+                        // A chained stream (e.g. Ogg radio) switched sample rate: finish the
+                        // old conversion and convert the new segment at its own rate.
+                        if let Some(r) = &mut cur.resampler {
+                            r.finish(&mut cur.pending);
+                        }
+                        match resampler_for(rate, self.output.sample_rate()) {
+                            Ok(r) => cur.resampler = r,
+                            Err(e) => {
+                                let (msg, generation) = (e.to_string(), cur.epoch);
+                                self.stop_playback();
+                                self.emit(generation, PlayerEvent::Error(msg));
+                                return Step::Idle;
+                            }
+                        }
+                        cur.source_rate = rate;
+                    }
                     match &mut cur.resampler {
                         Some(r) => r.process(&cur.decoded, &mut cur.pending),
                         None => cur.pending.extend_from_slice(&cur.decoded),
                     }
                     cur.eq.process(&mut cur.pending);
+                    if format_changed {
+                        let (info, generation) = (cur.decoder.info().clone(), cur.epoch);
+                        self.emit(generation, PlayerEvent::FormatChanged(info));
+                    }
                 }
                 Ok(false) => {
                     cur.eof = true;
@@ -584,11 +706,10 @@ impl Worker {
                     }
                 }
                 Err(e) => {
-                    let msg = e.to_string();
-                    let superseded = self.status.interrupt.load(Ordering::Acquire) != cur.epoch;
+                    let (msg, generation) = (e.to_string(), cur.epoch);
                     self.stop_playback();
-                    if !superseded {
-                        self.emit(PlayerEvent::Error(msg));
+                    if !self.superseded(generation) {
+                        self.emit(generation, PlayerEvent::Error(msg));
                     }
                     return Step::Idle;
                 }
@@ -599,10 +720,11 @@ impl Worker {
         if self.producer.slots() < self.producer.buffer().capacity() {
             return Step::Wait;
         }
+        let generation = cur.epoch;
         self.current = None;
         self.status.set_state(PlaybackState::Stopped);
         self.status.set_base(Duration::ZERO);
-        self.emit(PlayerEvent::Finished);
+        self.emit(generation, PlayerEvent::Finished);
         Step::Idle
     }
 }

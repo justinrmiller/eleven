@@ -33,7 +33,7 @@ fn realtime_engine() -> Engine {
 fn wait_for(engine: &Engine, secs: u64, pred: impl Fn(&PlayerEvent) -> bool) -> PlayerEvent {
     let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
-        if let Some(e) = engine.wait_event(Duration::from_millis(50))
+        if let Some((_, e)) = engine.wait_event(Duration::from_millis(50))
             && pred(&e)
         {
             return e;
@@ -76,6 +76,50 @@ fn plays_every_fixture_to_the_end() {
     engine.drain_vis(&mut vis);
     assert!(!vis.is_empty(), "the visualiser tap received audio");
     assert!(format!("{engine:?}").contains("Stopped"));
+}
+
+#[test]
+fn events_carry_the_generation_of_their_play() {
+    let engine = fast_engine(44_100);
+    let first = engine.play(file("tone.wav"));
+    let mut tags = Vec::new();
+    while !tags.contains(&(first, PlayerEvent::Finished)) {
+        let event = engine.wait_event(Duration::from_secs(5)).expect("event");
+        tags.push(event);
+    }
+    assert!(tags.iter().all(|(g, _)| *g == first), "{tags:?}");
+    let second = engine.play(file("missing.wav"));
+    assert!(second > first);
+    let (generation, event) = engine.wait_event(Duration::from_secs(5)).expect("error");
+    assert_eq!(generation, second);
+    assert!(matches!(event, PlayerEvent::Error(_)));
+}
+
+#[test]
+fn chained_streams_resample_each_segment_at_its_own_rate() {
+    // 1 s at 44.1 kHz followed by 1 s at 22.05 kHz, played on a 44.1 kHz output: without
+    // rebuilding the converter the second second would play in half the time (double speed).
+    let engine = realtime_engine();
+    engine.play(file("chained.ogg"));
+    let started = wait_for(&engine, 5, |e| matches!(e, PlayerEvent::Started(_)));
+    assert!(matches!(started, PlayerEvent::Started(info) if info.sample_rate == 44_100));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (mut changed, mut finished, mut longest) = (None, false, Duration::ZERO);
+    while !finished {
+        assert!(Instant::now() < deadline, "did not finish");
+        longest = longest.max(engine.position());
+        match engine.wait_event(Duration::from_millis(5)) {
+            Some((_, PlayerEvent::FormatChanged(info))) => changed = Some(info),
+            Some((_, PlayerEvent::Finished)) => finished = true,
+            _ => {}
+        }
+    }
+    let changed = changed.expect("FormatChanged reported");
+    assert_eq!(changed.sample_rate, 22_050);
+    assert!(
+        longest > Duration::from_millis(1_850) && longest < Duration::from_millis(2_100),
+        "played {longest:?} of audio for 2 s of source"
+    );
 }
 
 #[test]
@@ -139,7 +183,7 @@ fn pause_resume_seek_and_stop() {
         engine
             .poll_events()
             .iter()
-            .all(|e| *e != PlayerEvent::Finished)
+            .all(|(_, e)| *e != PlayerEvent::Finished)
     );
 }
 
@@ -163,15 +207,45 @@ fn switching_output_keeps_playing() {
     let engine = realtime_engine();
     engine.play(Location::File(path));
     wait_for(&engine, 5, |e| matches!(e, PlayerEvent::Started(_)));
-    wait_until(5, || engine.position() > Duration::from_millis(100));
+    wait_until(5, || engine.position() > Duration::from_millis(300));
+    let before = engine.position();
+    let switched = Instant::now();
     engine.set_output(OutputSpec::Null {
         sample_rate: 48_000,
         realtime: true,
     });
     wait_until(5, || engine.output_rate() == 48_000);
     let pos = engine.position();
+    // The clock carries on from what was heard: no jump and no audio skipped.
+    assert!(
+        pos >= before && pos <= before + switched.elapsed() + Duration::from_millis(50),
+        "{before:?} -> {pos:?}"
+    );
     wait_until(5, || engine.position() > pos + Duration::from_millis(100));
     assert_eq!(engine.state(), PlaybackState::Playing);
+    // Paused tracks stay paused across a switch.
+    engine.pause();
+    wait_until(5, || engine.state() == PlaybackState::Paused);
+    engine.set_output(OutputSpec::Null {
+        sample_rate: 44_100,
+        realtime: true,
+    });
+    wait_until(5, || engine.output_rate() == 44_100);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(engine.state(), PlaybackState::Paused);
+}
+
+#[test]
+fn switching_output_while_stopped_just_switches() {
+    let engine = fast_engine(44_100);
+    engine.set_output(OutputSpec::Null {
+        sample_rate: 32_000,
+        realtime: false,
+    });
+    wait_until(5, || engine.output_rate() == 32_000);
+    assert_eq!(engine.state(), PlaybackState::Stopped);
+    engine.play(file("tone.wav"));
+    wait_for(&engine, 5, |e| *e == PlayerEvent::Finished);
 }
 
 #[test]

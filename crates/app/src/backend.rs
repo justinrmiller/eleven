@@ -10,8 +10,8 @@ use eleven_core::{EntryId, EqSettings, Location, PlaybackState, PlayerEvent};
 
 /// The playback engine as seen by the controller.
 pub trait Backend {
-    /// Starts playing `location`.
-    fn play(&mut self, location: &Location);
+    /// Starts playing `location`; returns the generation that tags its events.
+    fn play(&mut self, location: &Location) -> u64;
     /// Pauses playback.
     fn pause(&mut self);
     /// Resumes paused playback.
@@ -32,8 +32,8 @@ pub trait Backend {
     fn state(&self) -> PlaybackState;
     /// Position within the current track.
     fn position(&self) -> Duration;
-    /// Takes pending engine events.
-    fn poll_events(&mut self) -> Vec<PlayerEvent>;
+    /// Takes pending engine events, each tagged with the generation of its `play` call.
+    fn poll_events(&mut self) -> Vec<(u64, PlayerEvent)>;
     /// Appends new mono visualiser samples.
     fn drain_vis(&mut self, out: &mut Vec<f32>);
     /// Name of the active output device.
@@ -69,8 +69,8 @@ impl EngineBackend {
 }
 
 impl Backend for EngineBackend {
-    fn play(&mut self, location: &Location) {
-        self.engine.play(location.clone());
+    fn play(&mut self, location: &Location) -> u64 {
+        self.engine.play(location.clone())
     }
     fn pause(&mut self) {
         self.engine.pause();
@@ -102,7 +102,7 @@ impl Backend for EngineBackend {
     fn position(&self) -> Duration {
         self.engine.position()
     }
-    fn poll_events(&mut self) -> Vec<PlayerEvent> {
+    fn poll_events(&mut self) -> Vec<(u64, PlayerEvent)> {
         self.engine.poll_events()
     }
     fn drain_vis(&mut self, out: &mut Vec<f32>) {
@@ -272,8 +272,17 @@ pub mod fake {
         pub state: PlaybackState,
         /// What `position()` returns.
         pub position: Duration,
-        /// Events returned by the next `poll_events()`.
+        /// Events returned by the next `poll_events()`, tagged with the current generation.
         pub events: Vec<PlayerEvent>,
+        /// Events returned by the next `poll_events()` with an explicit generation (e.g. stale
+        /// events of an earlier track), before `events`.
+        pub tagged_events: Vec<(u64, PlayerEvent)>,
+        /// Generation of the last `play()` (incremented by each call).
+        pub generation: u64,
+        /// Devices listed by `output_devices()` (two fakes when empty).
+        pub devices: Vec<String>,
+        /// Number of `output_devices()` calls.
+        pub device_queries: usize,
         /// Samples returned by the next `drain_vis()`.
         pub vis: Vec<f32>,
         /// What `output_error()` returns.
@@ -316,12 +325,14 @@ pub mod fake {
     }
 
     impl Backend for FakeBackend {
-        fn play(&mut self, location: &Location) {
+        fn play(&mut self, location: &Location) -> u64 {
             self.with(|s| {
                 s.calls.push(Call::Play(location.clone()));
                 s.state = PlaybackState::Playing;
                 s.position = Duration::ZERO;
-            });
+                s.generation += 1;
+                s.generation
+            })
         }
         fn pause(&mut self) {
             self.with(|s| {
@@ -370,8 +381,13 @@ pub mod fake {
         fn position(&self) -> Duration {
             self.with(|s| s.position)
         }
-        fn poll_events(&mut self) -> Vec<PlayerEvent> {
-            self.with(|s| std::mem::take(&mut s.events))
+        fn poll_events(&mut self) -> Vec<(u64, PlayerEvent)> {
+            self.with(|s| {
+                let generation = s.generation;
+                let mut all = std::mem::take(&mut s.tagged_events);
+                all.extend(s.events.drain(..).map(|e| (generation, e)));
+                all
+            })
         }
         fn drain_vis(&mut self, out: &mut Vec<f32>) {
             self.with(|s| out.append(&mut s.vis));
@@ -383,7 +399,14 @@ pub mod fake {
             self.with(|s| s.output_error.clone())
         }
         fn output_devices(&self) -> Vec<String> {
-            vec!["Fake output".to_owned(), "Other output".to_owned()]
+            self.with(|s| {
+                s.device_queries += 1;
+                if s.devices.is_empty() {
+                    vec!["Fake output".to_owned(), "Other output".to_owned()]
+                } else {
+                    s.devices.clone()
+                }
+            })
         }
         fn output_rate(&self) -> u32 {
             44_100
@@ -396,6 +419,8 @@ pub mod fake {
         pending: Vec<(EntryId, TagInfo)>,
         /// Paths requested so far.
         pub requested: Vec<PathBuf>,
+        /// Answer with an artist but no title, like a file tagged only with its artist.
+        pub artist_only: bool,
     }
 
     impl TagReader for FakeTags {
@@ -405,7 +430,9 @@ pub mod fake {
             self.pending.push((
                 id,
                 TagInfo {
-                    title: stem.map(|s| format!("Title of {s}")),
+                    title: stem
+                        .map(|s| format!("Title of {s}"))
+                        .filter(|_| !self.artist_only),
                     artist: Some("Fake Artist".into()),
                     album: None,
                     duration: Some(Duration::from_secs(60)),
@@ -519,11 +546,16 @@ mod tests {
             enabled: true,
             ..EqSettings::default()
         });
-        b.play(&Location::File(fixture("tone.flac")));
+        let generation = b.play(&Location::File(fixture("tone.flac")));
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut events = Vec::new();
         while !events.contains(&PlayerEvent::Finished) && Instant::now() < deadline {
-            events.extend(b.poll_events());
+            events.extend(
+                b.poll_events()
+                    .into_iter()
+                    .filter(|(g, _)| *g == generation)
+                    .map(|(_, e)| e),
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(events.iter().any(|e| matches!(e, PlayerEvent::Started(_))));

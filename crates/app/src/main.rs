@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 use eframe::egui;
 use eleven_app::backend::{EngineBackend, NativeFileChooser};
-use eleven_app::paths::AppPaths;
+use eleven_app::paths::{AppPaths, load_config};
 use eleven_app::ui::layout::{Frame, Sections};
 use eleven_app::{Controller, ElevenApp, Persistence};
 use eleven_audio::{MetadataScanner, Notify};
@@ -34,15 +34,15 @@ fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let paths = AppPaths::detect();
-    let config = paths.as_ref().map_or_else(Config::default, |p| {
-        Config::load(&p.config_file()).unwrap_or_else(|e| {
-            log::warn!("{e}; using defaults");
-            Config::default()
-        })
-    });
-    let persistence = paths
+    let loaded = paths.as_ref().map(|p| load_config(&p.config_file()));
+    let warning = loaded.as_ref().and_then(|l| l.warning.clone());
+    let mut persistence = paths
         .as_ref()
         .map_or_else(Persistence::default, AppPaths::persistence);
+    if loaded.as_ref().is_some_and(|l| !l.writable) {
+        persistence.config_file = None;
+    }
+    let config = loaded.map_or_else(Config::default, |l| l.config);
     let skins_dir = paths.as_ref().map(AppPaths::skins_dir);
     if let Some(dir) = &skins_dir {
         let _ = std::fs::create_dir_all(dir);
@@ -78,6 +78,9 @@ fn main() -> eframe::Result {
         media,
         persistence,
     );
+    if let Some(warning) = warning {
+        controller.show_message(&warning);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     enqueue_args(&mut controller, &args);
 

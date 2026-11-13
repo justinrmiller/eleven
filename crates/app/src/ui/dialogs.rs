@@ -1,8 +1,6 @@
 //! Modal dialogs and tool windows: jump to file, open location, save preset, preferences,
 //! file info and about.
 
-use std::path::PathBuf;
-
 use egui::{Context, Id, Key, Modal, ScrollArea, TextEdit, Window};
 use eleven_core::format::{format_optional_duration, playlist_time_text};
 
@@ -23,17 +21,12 @@ pub struct JumpDialog {
 const MAX_RESULTS: usize = 200;
 
 /// Shows every open dialog. Returns actions for the app to perform.
-pub fn show(
-    ctx: &Context,
-    ctl: &mut Controller,
-    st: &mut UiState,
-    skins: &[PathBuf],
-) -> Vec<Action> {
+pub fn show(ctx: &Context, ctl: &mut Controller, st: &mut UiState) -> Vec<Action> {
     let mut actions = Vec::new();
     jump(ctx, ctl, st);
     location(ctx, ctl, st);
     preset_name(ctx, ctl, st);
-    preferences(ctx, ctl, st, skins, &mut actions);
+    preferences(ctx, ctl, st, &mut actions);
     file_info(ctx, ctl, st);
     about(ctx, st);
     actions
@@ -121,7 +114,9 @@ fn location(ctx: &Context, ctl: &mut Controller, st: &mut UiState) {
     let Some(text) = st.location.as_mut() else {
         return;
     };
-    let mut done: Option<bool> = None;
+    // Read Enter before the text field: it surrenders focus on Enter, and requesting focus
+    // again below would hide that from `lost_focus`.
+    let mut done = ctx.input(|i| i.key_pressed(Key::Enter)).then_some(true);
     let modal = Modal::new(Id::unique("location_dialog")).show(ctx, |ui| {
         ui.set_width(240.0);
         ui.heading("Open location");
@@ -132,9 +127,6 @@ fn location(ctx: &Context, ctl: &mut Controller, st: &mut UiState) {
                 .id(Id::unique("location_text")),
         );
         edit.request_focus();
-        if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-            done = Some(true);
-        }
         ui.horizontal(|ui| {
             if ui.button("Play location").clicked() {
                 done = Some(true);
@@ -161,7 +153,7 @@ fn preset_name(ctx: &Context, ctl: &mut Controller, st: &mut UiState) {
     let Some(name) = st.preset_name.as_mut() else {
         return;
     };
-    let mut done: Option<bool> = None;
+    let mut done = ctx.input(|i| i.key_pressed(Key::Enter)).then_some(true);
     let modal = Modal::new(Id::unique("preset_dialog")).show(ctx, |ui| {
         ui.set_width(220.0);
         ui.heading("Save preset");
@@ -171,9 +163,6 @@ fn preset_name(ctx: &Context, ctl: &mut Controller, st: &mut UiState) {
                 .id(Id::unique("preset_name")),
         );
         edit.request_focus();
-        if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-            done = Some(true);
-        }
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
                 done = Some(true);
@@ -194,16 +183,12 @@ fn preset_name(ctx: &Context, ctl: &mut Controller, st: &mut UiState) {
     }
 }
 
-fn preferences(
-    ctx: &Context,
-    ctl: &mut Controller,
-    st: &mut UiState,
-    skins: &[PathBuf],
-    actions: &mut Vec<Action>,
-) {
+fn preferences(ctx: &Context, ctl: &mut Controller, st: &mut UiState, actions: &mut Vec<Action>) {
     if !st.show_prefs {
         return;
     }
+    let devices: &[String] = st.devices.get_or_insert_with(|| ctl.output_devices());
+    let skins: &[std::path::PathBuf] = st.skins.as_deref().unwrap_or_default();
     let mut open = true;
     Window::new("Preferences")
         .open(&mut open)
@@ -223,7 +208,7 @@ fn preferences(
                 .width(220.0)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut choice, None, "System default");
-                    for d in ctl.output_devices() {
+                    for d in devices {
                         ui.selectable_value(&mut choice, Some(d.clone()), d);
                     }
                 });

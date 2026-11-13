@@ -42,7 +42,14 @@ fn rig_with(config: Config, tracks: usize, chooser: FakeChooser, skins: Option<P
     let mut harness = Harness::builder()
         .with_size(vec2(275.0, 600.0))
         .with_step_dt(1.0 / 60.0)
-        .build_ui_state(|ui, app: &mut ElevenApp| app.show(ui), app);
+        .build_ui_state(
+            |ui, app: &mut ElevenApp| {
+                // As eframe does: logic first, then the UI.
+                app.tick(ui.ctx());
+                app.show(ui);
+            },
+            app,
+        );
     harness.run_steps(2);
     Rig { harness, backend }
 }
@@ -95,6 +102,10 @@ impl Rig {
 
     fn app(&self) -> &ElevenApp {
         self.harness.state()
+    }
+
+    fn app_mut(&mut self) -> &mut ElevenApp {
+        self.harness.state_mut()
     }
 
     fn exists(&self, label: &str) -> bool {
@@ -337,6 +348,70 @@ fn open_location_dialog_plays_a_url() {
     assert_eq!(
         r.plays(),
         [Location::Url("http://radio.example/live".into())]
+    );
+}
+
+#[test]
+fn enter_submits_the_location_and_preset_dialogs() {
+    let mut r = rig(0);
+    r.key_mod(cmd(), Key::L);
+    r.harness
+        .event(Event::Text("http://radio.example/live".into()));
+    r.harness.run_steps(2);
+    r.key(Key::Enter);
+    assert_eq!(
+        r.plays(),
+        [Location::Url("http://radio.example/live".into())]
+    );
+    assert!(!r.exists("Open location"));
+
+    r.click("Presets");
+    r.click("Save preset...");
+    r.harness.event(Event::Text("Late night".into()));
+    r.harness.run_steps(2);
+    r.key(Key::Enter);
+    assert!(!r.exists("Save preset"));
+    assert!(
+        r.app()
+            .controller
+            .config()
+            .eq_presets
+            .iter()
+            .any(|p| p.name == "Late night")
+    );
+}
+
+#[test]
+fn playback_advances_while_the_window_is_hidden() {
+    // eframe calls only `App::logic` for a minimised or hidden window, never `App::ui`.
+    let (mut app, backend) = app(Config::default(), 3, FakeChooser::default(), None);
+    let ctx = egui::Context::default();
+    app.controller.play();
+    backend.lock().unwrap().events.push(PlayerEvent::Finished);
+    eframe::App::logic(&mut app, &ctx, &mut eframe::Frame::_new_kittest());
+    assert_eq!(backend.lock().unwrap().plays(), [file(0), file(1)]);
+}
+
+#[test]
+fn preferences_query_devices_once_per_opening() {
+    let mut r = rig(0);
+    r.key_mod(cmd(), Key::P);
+    r.harness.run_steps(10);
+    r.harness
+        .get_by_role(egui::accesskit::Role::ComboBox)
+        .click();
+    r.harness.run_steps(10);
+    assert!(r.exists("Other output"), "the device list is shown");
+    assert_eq!(r.backend.lock().unwrap().device_queries, 1);
+    r.key(Key::Escape);
+    r.app_mut().state.show_prefs = false;
+    r.harness.run_steps(2);
+    r.key_mod(cmd(), Key::P);
+    r.harness.run_steps(2);
+    assert_eq!(
+        r.backend.lock().unwrap().device_queries,
+        2,
+        "refreshed on reopening"
     );
 }
 

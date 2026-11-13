@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 use std::io::Read;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -29,6 +29,8 @@ const READ_CHUNK: usize = 8 * 1024;
 const WAIT_SLICE: Duration = Duration::from_millis(50);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+/// How often a pending connect checks for an interrupt.
+const CONNECT_POLL: Duration = Duration::from_millis(20);
 
 /// Response headers relevant to playback.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -130,10 +132,45 @@ pub fn connect(url: &str) -> Result<(StreamHeaders, Box<dyn Read + Send + Sync>)
     Ok((headers, Box::new(reader)))
 }
 
+/// Like [`connect`], but gives up as soon as `interrupt` moves away from `epoch`.
+///
+/// The request runs on a helper thread, so DNS lookups and connect/response timeouts (which
+/// can take tens of seconds) never block the caller once it has been interrupted. An abandoned
+/// request finishes in the background and closes its connection.
+///
+/// # Errors
+/// Fails like [`connect`], or with [`AudioError::Network`] when interrupted.
+pub fn connect_interruptible(
+    url: &str,
+    interrupt: &AtomicU64,
+    epoch: u64,
+) -> Result<(StreamHeaders, Box<dyn Read + Send + Sync>)> {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let owned = url.to_owned();
+    std::thread::Builder::new()
+        .name("eleven-stream-connect".into())
+        .spawn(move || {
+            let _ = tx.send(connect(&owned));
+        })
+        .map_err(|e| AudioError::Network(format!("cannot start connection: {e}")))?;
+    loop {
+        if interrupt.load(Ordering::Acquire) != epoch {
+            return Err(AudioError::Network("connection cancelled".into()));
+        }
+        match rx.recv_timeout(CONNECT_POLL) {
+            Ok(result) => return result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                return Err(AudioError::Network("connection thread failed".into()));
+            }
+        }
+    }
+}
+
 /// Connects to `url` and builds a decoder reading from it.
 ///
-/// `interrupt`/`epoch` let the engine abort blocking reads: once the counter differs from
-/// `epoch`, reads fail with `Interrupted`.
+/// `interrupt`/`epoch` let the engine abort the connection and blocking reads: once the
+/// counter differs from `epoch`, they fail.
 ///
 /// # Errors
 /// Fails on network errors or if the stream's format cannot be decoded.
@@ -143,7 +180,7 @@ pub fn open_decoder(
     epoch: u64,
     on_event: OnEvent,
 ) -> Result<Decoder> {
-    let (headers, body) = connect(url)?;
+    let (headers, body) = connect_interruptible(url, &interrupt, epoch)?;
     let source = StreamSource::spawn(body, headers.metaint, interrupt, epoch, on_event);
     let (ext, mime) = format_hint(headers.content_type.as_deref(), url);
     let mut decoder =
@@ -171,12 +208,14 @@ struct Inner {
     changed: Condvar,
     interrupt: Arc<AtomicU64>,
     epoch: u64,
+    /// Set when the [`StreamSource`] is dropped, e.g. after a decode error.
+    dropped: AtomicBool,
     on_event: OnEvent,
 }
 
 impl Inner {
     fn interrupted(&self) -> bool {
-        self.interrupt.load(Ordering::Acquire) != self.epoch
+        self.dropped.load(Ordering::Acquire) || self.interrupt.load(Ordering::Acquire) != self.epoch
     }
 }
 
@@ -203,6 +242,7 @@ impl StreamSource {
             changed: Condvar::new(),
             interrupt,
             epoch,
+            dropped: AtomicBool::new(false),
             on_event,
         });
         let worker = Arc::clone(&inner);
@@ -240,6 +280,10 @@ fn reader_thread(mut body: Box<dyn Read + Send + Sync>, metaint: usize, inner: &
                 break;
             }
         };
+        // The read may have blocked for a while: don't report titles for a stopped stream.
+        if inner.interrupted() {
+            break;
+        }
         audio.clear();
         for block in demux.feed(&raw[..n], &mut audio) {
             if let Some(title) = parse_stream_title(&block)
@@ -329,7 +373,9 @@ impl Read for StreamSource {
 
 impl Drop for StreamSource {
     fn drop(&mut self) {
-        // Wake the reader so it notices if it is waiting on a full buffer.
+        // Stop the reader thread (and with it the HTTP connection): nobody reads any more.
+        // It exits at its next check, at the latest when its current read returns.
+        self.inner.dropped.store(true, Ordering::Release);
         self.inner
             .buffer
             .lock()
@@ -464,6 +510,65 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
         // Further reads keep failing rather than blocking.
         assert!(src.read(&mut [0u8; 16]).is_err());
+    }
+
+    /// Endless body that counts how many reads were made.
+    struct Counting(Arc<AtomicU64>);
+    impl Read for Counting {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(Duration::from_millis(1));
+            self.0.fetch_add(1, Ordering::AcqRel);
+            out.fill(0);
+            Ok(out.len())
+        }
+    }
+
+    #[test]
+    fn dropping_the_source_stops_the_reader() {
+        let (on, _events) = collector();
+        let reads = Arc::new(AtomicU64::new(0));
+        // The epoch never changes, as when the engine stops after a decode error.
+        let src = StreamSource::spawn(
+            Box::new(Counting(Arc::clone(&reads))),
+            0,
+            Arc::new(AtomicU64::new(0)),
+            0,
+            on,
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        drop(src);
+        std::thread::sleep(Duration::from_millis(50));
+        let after_drop = reads.load(Ordering::Acquire);
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            reads.load(Ordering::Acquire),
+            after_drop,
+            "reader kept downloading"
+        );
+    }
+
+    #[test]
+    fn interrupted_connects_return_promptly() {
+        // Accepts the connection but never answers, like a stalled server.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/live", listener.local_addr().unwrap());
+        let interrupt = Arc::new(AtomicU64::new(1));
+        let flag = Arc::clone(&interrupt);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            flag.fetch_add(1, Ordering::AcqRel);
+        });
+        let start = std::time::Instant::now();
+        let Err(err) = connect_interruptible(&url, &interrupt, 1) else {
+            panic!("connect must fail");
+        };
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            start.elapsed()
+        );
+        assert!(err.to_string().contains("cancelled"), "{err}");
+        drop(listener);
     }
 
     #[test]

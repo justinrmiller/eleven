@@ -54,6 +54,9 @@ impl TrackInfo {
 pub enum PlayerEvent {
     /// A track was opened successfully and playback has begun.
     Started(TrackInfo),
+    /// The source changed format mid-track (a chained stream switched sample rate or
+    /// channels); the info replaces the one from [`PlayerEvent::Started`].
+    FormatChanged(TrackInfo),
     /// A network stream is filling its buffer (0–100 %).
     Buffering(u8),
     /// A live stream announced a new title (Icecast `StreamTitle`).

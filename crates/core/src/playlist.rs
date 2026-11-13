@@ -418,6 +418,28 @@ impl Playlist {
         true
     }
 
+    /// Replaces an entry's tag information (title and artist, even when absent); a `None`
+    /// duration keeps the current one. Use this for authoritative tag reads, so a title saved
+    /// in a playlist file ("Artist - Title") is not combined with the tags again. Returns
+    /// `false` if the entry no longer exists.
+    pub fn set_tags(
+        &mut self,
+        id: EntryId,
+        title: Option<String>,
+        artist: Option<String>,
+        duration: Option<Duration>,
+    ) -> bool {
+        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) else {
+            return false;
+        };
+        entry.title = title;
+        entry.artist = artist;
+        if duration.is_some() {
+            entry.duration = duration;
+        }
+        true
+    }
+
     /// Sum of all entry durations.
     #[must_use]
     pub fn total_duration(&self) -> TotalDuration {
@@ -578,8 +600,18 @@ impl Playlist {
     }
 
     /// Makes the entry at `index` current (e.g. on double-click). Returns its id.
+    ///
+    /// The chosen track also moves to the current point of the shuffle order (right after the
+    /// previous current track), so jumping around never strands unplayed tracks behind it.
     pub fn set_current(&mut self, index: usize) -> Option<EntryId> {
         let id = self.entries.get(index)?.id;
+        if self.current != Some(id)
+            && let Some(from) = self.shuffle_order.iter().position(|&s| s == id)
+        {
+            self.shuffle_order.remove(from);
+            let to = self.current_shuffle_pos().map_or(0, |p| p + 1);
+            self.shuffle_order.insert(to, id);
+        }
         self.current = Some(id);
         Some(id)
     }
@@ -911,6 +943,63 @@ mod tests {
         p.set_repeat(true);
         assert_eq!(p.next_track(), Some(0));
         assert_eq!(p.next_track(), Some(0));
+    }
+
+    #[test]
+    fn jumping_in_shuffle_mode_strands_no_tracks() {
+        for jump_to in 0..10 {
+            let mut p = playlist(10);
+            p.set_shuffle(true);
+            let mut played = vec![p.next_track().unwrap(), p.next_track().unwrap()];
+            p.set_current(jump_to);
+            played.push(jump_to);
+            while let Some(i) = p.next_track() {
+                played.push(i);
+            }
+            played.sort_unstable();
+            played.dedup();
+            assert_eq!(played, (0..10).collect::<Vec<_>>(), "jump to {jump_to}");
+        }
+    }
+
+    #[test]
+    fn restored_current_track_starts_the_shuffle_order() {
+        // Controller::new enables shuffle on an empty list, adds entries, then restores.
+        let mut p = Playlist::with_seed(5);
+        p.set_shuffle(true);
+        for i in 0..8 {
+            p.push(file(&format!("t{i}")));
+        }
+        p.set_current(6);
+        assert_eq!(p.shuffle_order()[0], p.entries()[6].id());
+        let mut seen = vec![6];
+        while let Some(i) = p.next_track() {
+            seen.push(i);
+        }
+        assert_eq!(seen.len(), 8);
+    }
+
+    #[test]
+    fn set_tags_replaces_title_and_artist() {
+        let mut p = playlist(1);
+        let id = p.entries()[0].id();
+        p.update_metadata(
+            id,
+            Some("A - song".into()),
+            None,
+            Some(Duration::from_secs(9)),
+        );
+        assert!(p.set_tags(id, None, Some("A".into()), None));
+        let e = &p.entries()[0];
+        assert_eq!((e.title.as_deref(), e.artist.as_deref()), (None, Some("A")));
+        assert_eq!(
+            e.duration,
+            Some(Duration::from_secs(9)),
+            "None keeps the duration"
+        );
+        assert_eq!(e.display_title(), "track00");
+        p.clear();
+        assert!(!p.set_tags(id, None, None, None));
     }
 
     #[test]

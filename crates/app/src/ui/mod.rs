@@ -1,7 +1,10 @@
 //! The egui user interface.
 //!
+//! [`ElevenApp::tick`] runs the player (engine events, media keys, timers) and
 //! [`ElevenApp::show`] draws the docked main / equaliser / playlist sections, runs dialogs,
 //! maps keyboard shortcuts and drag-and-drop, and keeps the native window sized to fit.
+//! eframe calls `tick` even while the window is minimised or hidden and `show` only while it is
+//! visible, so playback keeps advancing in the background.
 
 pub mod actions;
 pub mod builtin;
@@ -46,6 +49,11 @@ pub struct UiState {
     pub preset_name: Option<String>,
     /// Preferences window open.
     pub show_prefs: bool,
+    /// Skins listed in preferences, read when it opens.
+    pub skins: Option<Vec<PathBuf>>,
+    /// Output devices listed in preferences, queried when it opens (enumerating devices can
+    /// take a while, e.g. with ALSA).
+    pub devices: Option<Vec<String>>,
     /// About window open.
     pub show_about: bool,
     /// File-info window for this playlist index.
@@ -173,9 +181,12 @@ impl ElevenApp {
         }
     }
 
-    /// Draws one frame and handles input.
-    pub fn show(&mut self, ui: &mut Ui) {
-        let ctx = ui.ctx().clone();
+    /// Runs the player: engine events (advancing to the next track), tag results, media keys
+    /// and timers. Call it once per frame before [`ElevenApp::show`], and also while the window
+    /// is hidden (eframe's `App::logic`).
+    pub fn tick(&mut self, ctx: &Context) {
+        // While the window is hidden, the input time stays at the last shown frame, so dt is
+        // zero: timers pause, but events are still handled.
         let now = ctx.input(|i| i.time);
         #[allow(clippy::cast_possible_truncation)]
         let dt = self
@@ -184,7 +195,19 @@ impl ElevenApp {
         self.last_time = Some(now);
         self.controller.update(dt);
         self.state.blink = (self.state.blink + dt) % 1.0;
+        let visible = ctx.input(|i| i.viewport().visible()).unwrap_or(true);
+        let interval = match self.controller.state() {
+            // Hidden: engine and media-key events wake the app; this is only a backstop.
+            _ if !visible => Duration::from_millis(500),
+            PlaybackState::Playing => Duration::from_millis(16),
+            _ => Duration::from_millis(100),
+        };
+        ctx.request_repaint_after(interval);
+    }
 
+    /// Draws one frame and handles input. [`ElevenApp::tick`] runs the player itself.
+    pub fn show(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
         if let Some(skin) = self.state.pending_skin.take() {
             self.set_skin(&ctx, skin);
         }
@@ -220,13 +243,15 @@ impl ElevenApp {
                 pl,
             ));
         }
-        let skins = self.available_skins();
-        actions.extend(dialogs::show(
-            &ctx,
-            &mut self.controller,
-            &mut self.state,
-            &skins,
-        ));
+        if self.state.show_prefs {
+            if self.state.skins.is_none() {
+                self.state.skins = Some(self.available_skins());
+            }
+        } else {
+            self.state.skins = None;
+            self.state.devices = None;
+        }
+        actions.extend(dialogs::show(&ctx, &mut self.controller, &mut self.state));
         actions.extend(self.keyboard(&ctx));
         self.drag_and_drop(&ctx, ui);
         for action in actions {
@@ -236,11 +261,6 @@ impl ElevenApp {
         if ctx.input(|i| i.viewport().close_requested()) {
             self.persist();
         }
-        let interval = match self.controller.state() {
-            PlaybackState::Playing => Duration::from_millis(16),
-            _ => Duration::from_millis(100),
-        };
-        ctx.request_repaint_after(interval);
     }
 
     fn keyboard(&mut self, ctx: &Context) -> Vec<Action> {
@@ -442,6 +462,10 @@ impl ElevenApp {
 }
 
 impl eframe::App for ElevenApp {
+    fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.tick(ctx);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
     }

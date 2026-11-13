@@ -17,7 +17,7 @@ pub mod output;
 pub mod resample;
 pub mod stream;
 
-pub use engine::{Engine, Notify};
+pub use engine::{Engine, Notify, TaggedEvent};
 pub use error::{AudioError, Result};
 pub use metadata::{MetadataScanner, TagInfo};
 pub use output::OutputSpec;

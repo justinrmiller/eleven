@@ -4,6 +4,7 @@
 //! audio engine, tag scanner and OS media controls through the traits in [`crate::backend`],
 //! which makes all of this testable with fakes.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -57,6 +58,12 @@ pub struct Controller {
     message: Option<(String, f32)>,
     consecutive_errors: usize,
     last_published: Option<(PlaybackState, String)>,
+    /// Generation of the track requested from the backend, until it stops, ends or fails.
+    /// Events for any other generation are stale. While a stream connects and buffers, this
+    /// is set although the backend still reports `Stopped`.
+    generation: Option<u64>,
+    /// Output error last reported to the user, to notice failures of later device switches.
+    output_error: Option<String>,
 }
 
 impl std::fmt::Debug for Controller {
@@ -95,6 +102,8 @@ impl Controller {
             message: None,
             consecutive_errors: 0,
             last_published: None,
+            generation: None,
+            output_error: None,
         };
         this.playlist.set_shuffle(this.config.shuffle);
         this.playlist.set_repeat(this.config.repeat);
@@ -109,12 +118,28 @@ impl Controller {
                 this.playlist.set_current(i);
             }
         }
-        if let Some(err) = this.backend.output_error() {
-            log::warn!("audio output unavailable: {err}");
-            this.show_message("No audio device - playing silently");
-        }
+        this.check_output();
         this.refresh_marquee();
         this
+    }
+
+    /// Reports a newly failed output (at start-up or after a device switch).
+    fn check_output(&mut self) {
+        let error = self.backend.output_error();
+        if error != self.output_error {
+            if let Some(err) = &error {
+                log::warn!("audio output unavailable: {err}");
+                self.show_message("No audio device - playing silently");
+            }
+            self.output_error = error;
+        }
+    }
+
+    /// Whether a track is playing, paused, or requested and still starting (a stream
+    /// connecting or buffering).
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.state().is_active() || self.generation.is_some()
     }
 
     // ----------------------------------------------------------------------------------------
@@ -234,12 +259,21 @@ impl Controller {
 
     /// Processes engine/tag/media events and advances animations by `dt` seconds.
     pub fn update(&mut self, dt: f32) {
-        for event in self.backend.poll_events() {
-            self.handle_event(event);
+        for (generation, event) in self.backend.poll_events() {
+            // Events of an earlier track can still be queued after the next one started.
+            if Some(generation) == self.generation {
+                self.handle_event(event);
+            }
         }
         for (id, tags) in self.tags.poll() {
-            self.playlist
-                .update_metadata(id, tags.title, tags.artist, tags.duration);
+            if tags.title.is_some() || tags.artist.is_some() {
+                // Tags replace the title saved in the playlist file (which may be a display
+                // title such as "Artist - Title") instead of being combined with it.
+                self.playlist
+                    .set_tags(id, tags.title, tags.artist, tags.duration);
+            } else {
+                self.playlist.update_metadata(id, None, None, tags.duration);
+            }
             if self.playlist.current_id() == Some(id) && self.stream_title.is_none() {
                 self.refresh_marquee();
             }
@@ -247,6 +281,7 @@ impl Controller {
         for cmd in self.media.poll() {
             self.handle_media(cmd);
         }
+        self.check_output();
         self.update_vis(dt);
         if let Some((_, left)) = &mut self.message {
             *left -= dt;
@@ -288,6 +323,10 @@ impl Controller {
                 self.refresh_marquee();
                 self.apply_auto_preset();
             }
+            PlayerEvent::FormatChanged(info) => {
+                self.track = Some(info);
+                self.refresh_marquee();
+            }
             PlayerEvent::Buffering(pct) => {
                 self.buffering = (pct < 100).then_some(pct);
                 self.refresh_marquee();
@@ -301,6 +340,8 @@ impl Controller {
                 self.refresh_marquee();
             }
             PlayerEvent::Finished => {
+                self.generation = None;
+                self.buffering = None;
                 if self.playlist.next_track().is_some() {
                     self.play_current();
                 } else {
@@ -308,6 +349,8 @@ impl Controller {
                 }
             }
             PlayerEvent::Error(msg) => {
+                self.generation = None;
+                self.buffering = None;
                 self.consecutive_errors += 1;
                 log::warn!("playback error: {msg}");
                 self.show_message(&format!("Error: {msg}"));
@@ -323,19 +366,25 @@ impl Controller {
 
     fn handle_media(&mut self, cmd: MediaCommand) {
         match cmd {
-            MediaCommand::Play => self.play(),
+            // Unlike the Play button, a media "Play" never restarts what is already playing.
+            MediaCommand::Play => match self.state() {
+                PlaybackState::Playing => {}
+                PlaybackState::Paused => self.backend.resume(),
+                PlaybackState::Stopped if self.generation.is_some() => {}
+                PlaybackState::Stopped => self.play(),
+            },
             MediaCommand::Pause => {
                 if self.state() == PlaybackState::Playing {
                     self.pause();
                 }
             }
-            MediaCommand::Toggle => {
-                if self.state() == PlaybackState::Playing {
-                    self.pause();
-                } else {
-                    self.play();
-                }
-            }
+            MediaCommand::Toggle => match self.state() {
+                PlaybackState::Playing => self.pause(),
+                PlaybackState::Paused => self.backend.resume(),
+                // A stream that is still connecting cannot pause: stop it instead.
+                PlaybackState::Stopped if self.generation.is_some() => self.stop(),
+                PlaybackState::Stopped => self.play(),
+            },
             MediaCommand::Stop => self.stop(),
             MediaCommand::Next => self.next(),
             MediaCommand::Previous => self.previous(),
@@ -414,7 +463,7 @@ impl Controller {
         self.track = None;
         self.stream_title = None;
         self.buffering = location.is_url().then_some(0);
-        self.backend.play(&location);
+        self.generation = Some(self.backend.play(&location));
         self.refresh_marquee();
     }
 
@@ -453,13 +502,14 @@ impl Controller {
     /// Stops playback.
     pub fn stop(&mut self) {
         self.backend.stop();
+        self.generation = None;
         self.buffering = None;
         self.refresh_marquee();
     }
 
-    /// Next track; starts it if something is playing.
+    /// Next track; starts it if something is playing (or starting).
     pub fn next(&mut self) {
-        let active = self.state().is_active();
+        let active = self.is_active();
         if self.playlist.next_track().is_some() {
             if active {
                 self.play_current();
@@ -469,9 +519,9 @@ impl Controller {
         }
     }
 
-    /// Previous track; starts it if something is playing.
+    /// Previous track; starts it if something is playing (or starting).
     pub fn previous(&mut self) {
-        let active = self.state().is_active();
+        let active = self.is_active();
         if self.playlist.prev_track().is_some() {
             if active {
                 self.play_current();
@@ -669,7 +719,7 @@ impl Controller {
         for path in paths {
             if path.is_dir() {
                 let mut files = Vec::new();
-                collect_audio_files(path, 0, &mut files);
+                collect_audio_files(path, 0, &mut HashSet::new(), &mut files);
                 for f in &files {
                     self.add_file(f);
                     added += 1;
@@ -797,8 +847,20 @@ impl Controller {
 }
 
 /// Recursively collects audio files under `dir`, sorted by name, skipping hidden entries.
-fn collect_audio_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+///
+/// Symlinked folders are followed, but each real folder is scanned once, so links back to an
+/// ancestor (`all -> .`) neither duplicate tracks nor recurse forever.
+fn collect_audio_files(
+    dir: &Path,
+    depth: usize,
+    visited: &mut HashSet<PathBuf>,
+    out: &mut Vec<PathBuf>,
+) {
     if depth > MAX_DEPTH {
+        return;
+    }
+    let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    if !visited.insert(real) {
         return;
     }
     let Ok(read) = std::fs::read_dir(dir) else {
@@ -815,7 +877,7 @@ fn collect_audio_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     entries.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
     for path in entries {
         if path.is_dir() {
-            collect_audio_files(&path, depth + 1, out);
+            collect_audio_files(&path, depth + 1, visited, out);
         } else if is_audio_path(&path) {
             out.push(path);
         }
@@ -970,7 +1032,13 @@ mod tests {
             2,
             "no repeat: stop at the end"
         );
+        assert!(!r.c.is_active());
+        // A duplicate (stale) Finished for the ended track does nothing.
+        push_event(&r, PlayerEvent::Finished);
+        r.c.update(0.016);
+        assert_eq!(r.backend.lock().unwrap().plays().len(), 2);
         r.c.toggle_repeat();
+        r.c.play_index(1);
         push_event(&r, PlayerEvent::Finished);
         r.c.update(0.016);
         assert_eq!(r.backend.lock().unwrap().plays().last(), Some(&file(0)));
@@ -981,22 +1049,144 @@ mod tests {
         let mut r = with_tracks(3);
         r.c.toggle_repeat();
         r.c.play();
-        for _ in 0..10 {
-            push_event(&r, PlayerEvent::Error("bad".into()));
+        let error = |r: &mut Rig| {
+            push_event(r, PlayerEvent::Error("bad".into()));
             r.c.update(0.016);
-        }
-        // Three entries: the first plus two skips, then it stops trying.
+        };
+        error(&mut r);
+        error(&mut r);
         assert_eq!(
             r.backend.lock().unwrap().plays(),
             [file(0), file(1), file(2)]
         );
-        assert!(r.c.title_text().contains("Error: bad"));
-        // A successful start resets the counter.
+        // A successful start resets the counter...
         push_event(&r, PlayerEvent::Started(info(true, Some(10))));
         r.c.update(0.016);
-        push_event(&r, PlayerEvent::Error("bad".into()));
+        for _ in 0..10 {
+            error(&mut r);
+        }
+        // ...then three failures in a row (one per entry) make it stop trying.
+        assert_eq!(r.backend.lock().unwrap().plays().len(), 5);
+        assert!(r.c.title_text().contains("Error: bad"));
+        // The engine is stopped after an error; nothing is pending any more.
+        r.backend.lock().unwrap().state = PlaybackState::Stopped;
+        assert!(!r.c.is_active());
+    }
+
+    #[test]
+    fn events_of_a_previous_track_are_ignored() {
+        let mut r = with_tracks(3);
+        r.c.add_location("http://radio.example/live");
+        r.c.play_index(3);
+        let radio = r.backend.lock().unwrap().generation;
+        push_event(&r, PlayerEvent::Started(info(false, None)));
         r.c.update(0.016);
-        assert_eq!(r.backend.lock().unwrap().plays().len(), 4);
+        r.c.play_index(0);
+        // The radio announced a new song (and ended) just before the switch was processed.
+        r.backend.lock().unwrap().tagged_events = vec![
+            (radio, PlayerEvent::StreamTitle("Some Song".into())),
+            (radio, PlayerEvent::Buffering(30)),
+            (radio, PlayerEvent::Finished),
+            (radio, PlayerEvent::Error("connection reset".into())),
+        ];
+        r.c.update(0.016);
+        assert_eq!(
+            r.backend.lock().unwrap().plays(),
+            [Location::Url("http://radio.example/live".into()), file(0)]
+        );
+        assert_eq!(r.c.playlist().current_index(), Some(0));
+        assert_eq!(
+            r.c.playlist().get(0).unwrap().title.as_deref(),
+            Some("Title of 00"),
+            "the new track is not renamed after the radio song"
+        );
+        assert!(!r.c.title_text().contains("Some Song"));
+        assert!(!r.c.title_text().contains("Buffering"));
+        assert!(!r.c.title_text().contains("Error"));
+    }
+
+    #[test]
+    fn next_while_a_stream_is_still_buffering_plays_the_next_entry() {
+        let mut r = rig();
+        r.c.add_location("http://radio.example/a");
+        r.c.add_location("http://radio.example/b");
+        r.c.play();
+        // The engine reports Stopped while it connects and buffers.
+        r.backend.lock().unwrap().state = PlaybackState::Stopped;
+        assert!(r.c.is_active());
+        r.c.next();
+        assert_eq!(
+            r.backend.lock().unwrap().plays(),
+            [
+                Location::Url("http://radio.example/a".into()),
+                Location::Url("http://radio.example/b".into())
+            ]
+        );
+        r.backend.lock().unwrap().state = PlaybackState::Stopped;
+        r.c.previous();
+        assert_eq!(r.backend.lock().unwrap().plays().len(), 3);
+        r.c.stop();
+        assert!(!r.c.is_active());
+        r.c.next();
+        assert_eq!(
+            r.backend.lock().unwrap().plays().len(),
+            3,
+            "stopped: select only"
+        );
+    }
+
+    #[test]
+    fn a_failed_stream_does_not_stay_buffering() {
+        let mut r = rig();
+        r.c.add_location("http://radio.example/down");
+        r.c.play();
+        assert_eq!(r.c.title_text(), "Buffering... 0%");
+        r.backend.lock().unwrap().state = PlaybackState::Stopped;
+        push_event(&r, PlayerEvent::Error("network error".into()));
+        r.c.update(0.016);
+        assert!(r.c.title_text().contains("Error"));
+        r.c.update(MESSAGE_SECS + 0.1);
+        assert!(
+            !r.c.title_text().contains("Buffering"),
+            "{}",
+            r.c.title_text()
+        );
+    }
+
+    #[test]
+    fn format_changes_update_the_track_info() {
+        let mut r = with_tracks(1);
+        r.c.play();
+        push_event(&r, PlayerEvent::Started(info(false, None)));
+        r.c.update(0.0);
+        let mut changed = info(false, None);
+        changed.sample_rate = 22_050;
+        changed.channels = 1;
+        push_event(&r, PlayerEvent::FormatChanged(changed));
+        r.c.update(0.0);
+        let track = r.c.track_info().unwrap();
+        assert_eq!((track.sample_rate, track.channels), (22_050, 1));
+    }
+
+    #[test]
+    fn a_failed_device_switch_is_reported() {
+        let mut r = with_tracks(1);
+        r.c.update(MESSAGE_SECS + 0.1);
+        r.c.set_output_device(Some("hw:CARD=PCH,DEV=0".into()));
+        r.c.update(0.016);
+        assert!(!r.c.title_text().contains("No audio device"));
+        // The engine switches asynchronously; the failure shows up a little later.
+        r.backend.lock().unwrap().output_error = Some("device busy".into());
+        r.c.update(0.016);
+        assert!(
+            r.c.title_text().contains("No audio device"),
+            "{}",
+            r.c.title_text()
+        );
+        // Reported once, not every frame.
+        r.c.update(MESSAGE_SECS + 0.1);
+        r.c.update(0.016);
+        assert!(!r.c.title_text().contains("No audio device"));
     }
 
     #[test]
@@ -1217,6 +1407,28 @@ mod tests {
     }
 
     #[test]
+    fn media_play_never_restarts_a_playing_track() {
+        let mut r = with_tracks(2);
+        r.media.lock().unwrap().incoming = vec![MediaCommand::Play, MediaCommand::Play];
+        r.c.update(0.0);
+        assert_eq!(r.backend.lock().unwrap().plays(), [file(0)]);
+        r.c.pause();
+        r.media.lock().unwrap().incoming = vec![MediaCommand::Play];
+        r.c.update(0.0);
+        assert_eq!(r.c.state(), PlaybackState::Playing);
+        assert_eq!(r.backend.lock().unwrap().plays().len(), 1, "resumed");
+        // While a track is still starting, Play leaves it alone and Toggle cancels it.
+        r.backend.lock().unwrap().state = PlaybackState::Stopped;
+        r.media.lock().unwrap().incoming = vec![MediaCommand::Play];
+        r.c.update(0.0);
+        assert_eq!(r.backend.lock().unwrap().plays().len(), 1);
+        r.media.lock().unwrap().incoming = vec![MediaCommand::Toggle];
+        r.c.update(0.0);
+        assert!(!r.c.is_active());
+        assert_eq!(r.backend.lock().unwrap().calls.last(), Some(&Call::Stop));
+    }
+
+    #[test]
     fn media_keys_drive_the_transport() {
         let mut r = with_tracks(3);
         r.media.lock().unwrap().incoming =
@@ -1316,6 +1528,69 @@ mod tests {
         r.c.jump_to(1);
         assert_eq!(r.backend.lock().unwrap().plays(), [file(2)]);
         assert_eq!(r.c.playlist().selected_indices(), [1]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_loops_in_folders_are_scanned_once() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("album")).unwrap();
+        std::fs::write(root.join("album/song.mp3"), b"").unwrap();
+        // Two links back to the root would mean ~2^32 directory scans without loop detection.
+        symlink(root, root.join("album/all")).unwrap();
+        symlink(root, root.join("album/again")).unwrap();
+        // A link to a sibling folder outside the added tree is still followed.
+        let other = tempfile::tempdir().unwrap();
+        std::fs::write(other.path().join("linked.mp3"), b"").unwrap();
+        symlink(other.path(), root.join("elsewhere")).unwrap();
+        let mut r = rig();
+        let n = r.c.add_paths(&[root.to_owned()]);
+        let names: Vec<String> =
+            r.c.playlist()
+                .entries()
+                .iter()
+                .map(|e| e.location.display_name())
+                .collect();
+        assert_eq!(names, ["song", "linked"]);
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn titles_saved_in_the_playlist_do_not_compound_with_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let persistence = Persistence {
+            config_file: None,
+            playlist_file: Some(dir.path().join("playlist.m3u")),
+        };
+        let session = |first: bool| {
+            let (backend, _) = FakeBackend::new();
+            let mut tags = FakeTags::default();
+            tags.artist_only = true;
+            let mut c = Controller::new(
+                Config::default(),
+                Box::new(backend),
+                Box::new(tags),
+                Box::new(crate::backend::NoMediaControls),
+                persistence.clone(),
+            );
+            if first {
+                c.add_location("/music/song.mp3");
+            }
+            c.update(0.0);
+            let title = c.playlist().get(0).unwrap().display_title();
+            c.save_state().unwrap();
+            title
+        };
+        let titles: Vec<String> = [true, false, false, false]
+            .into_iter()
+            .map(session)
+            .collect();
+        assert!(
+            titles.iter().all(|t| *t == titles[0]),
+            "the title changed between sessions: {titles:?}"
+        );
     }
 
     #[test]

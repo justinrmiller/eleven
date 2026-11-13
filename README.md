@@ -108,7 +108,7 @@ Mouse:
 
 Files live in `~/.config/eleven/` on Linux and `~/Library/Application Support/eleven/` on macOS. Set `ELEVEN_CONFIG_DIR` to override the location.
 
-- `config.toml`: settings, EQ state and user presets. Unknown or missing keys are tolerated.
+- `config.toml`: settings, EQ state and user presets. Unknown or missing keys are tolerated. If the file can't be read at all (a typo, say), eleven starts with defaults and keeps the broken file as `config.toml.bad`, so your settings aren't lost.
 - `playlist.m3u`: the auto-saved playlist.
 - `skins/`: drop `.wsz` files here, then pick one under **Preferences → Skin**. **Load skin file…** opens any skin directly.
 
@@ -152,7 +152,7 @@ make cov     # line coverage via cargo-llvm-cov, gated at 90 %
 | Audio | Committed 1-second fixtures for every format (made by `make fixtures` with ffmpeg) cover decoding and sample-accurate seeking. The DSP output is measured against the design response. The engine runs end to end through a fast silent output. Streams are played from an in-process HTTP/Icecast server, so no network is needed. |
 | UI | egui_kittest drives the real UI headlessly: transport, shortcuts, sliders, playlist selection, double-click and menus, dialogs, presets, skins, shade/double size, drag and drop. |
 
-Coverage is about 94 % of lines. Excluded from the gate are `cpal_out.rs` (needs a sound card), `media_keys.rs` (needs a D-Bus or macOS session) and `main.rs`.
+Coverage is about 95 % of lines. Excluded from the gate are `cpal_out.rs` (needs a sound card), `media_keys.rs` (needs a D-Bus or macOS session) and `main.rs`.
 
 CI (`.github/workflows/ci.yml`) runs on Ubuntu and macOS. It runs fmt, clippy and tests on both, coverage on Linux, and builds the `.app` bundle on macOS.
 

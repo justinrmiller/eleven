@@ -34,8 +34,10 @@ impl Default for PlaylistColors {
 /// Parses `#rrggbb` (the `#` is optional).
 #[must_use]
 pub fn parse_hex_color(text: &str) -> Option<Rgb> {
-    let hex = text.trim().trim_start_matches('#');
-    if hex.len() < 6 || !hex.is_char_boundary(6) {
+    // Only ASCII hex digits are valid; checking first also keeps the byte slicing below on
+    // character boundaries (`#aé1234` used to panic).
+    let hex = text.trim().trim_start_matches('#').get(..6)?;
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
@@ -124,13 +126,29 @@ mod tests {
         assert_eq!(parse_hex_color("102030"), Some(Rgb(16, 32, 48)));
         assert_eq!(parse_hex_color("#12345"), None);
         assert_eq!(parse_hex_color("#zz0000"), None);
+        assert_eq!(
+            parse_hex_color("#a\u{e9}1234"),
+            None,
+            "non-ASCII must not panic"
+        );
+        assert_eq!(parse_hex_color("\u{e9}\u{e9}\u{e9}"), None);
+        assert_eq!(
+            parse_hex_color("#+12345"),
+            None,
+            "from_str_radix would accept a sign"
+        );
+        assert_eq!(
+            parse_hex_color("#102030ff"),
+            Some(Rgb(16, 32, 48)),
+            "extra digits ignored"
+        );
         assert_eq!(parse_hex_color("#\u{e9}\u{e9}\u{e9}\u{e9}"), None);
     }
 
     #[test]
     fn pledit_parsing() {
         let c = parse_pledit(
-            "[Text]\r\nNormal=#112233\r\nCurrent= #FFFFFF \r\nNormalBG=#000000\r\nselectedbg=#0000FF\r\nFont=Arial\r\nbogus\r\nNormal=oops\r\n",
+            "[Text]\r\nSelectedBG=#\u{e9}\u{e9}\u{e9}\r\nNormal=#112233\r\nCurrent= #FFFFFF \r\nNormalBG=#000000\r\nselectedbg=#0000FF\r\nFont=Arial\r\nbogus\r\nNormal=oops\r\n",
         );
         assert_eq!(
             c.normal,
