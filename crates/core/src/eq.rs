@@ -91,16 +91,25 @@ impl EqSettings {
     /// filters; bands too close to Nyquist are skipped.
     #[must_use]
     pub fn design(&self, sample_rate: u32) -> Vec<BiquadCoeffs> {
+        self.design_bands(sample_rate)
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// Like [`EqSettings::design`], but one slot per band (`None` = the band is flat or
+    /// skipped), so a real-time filter can keep each band's state across changes.
+    #[must_use]
+    pub fn design_bands(&self, sample_rate: u32) -> [Option<BiquadCoeffs>; BANDS] {
         if !self.enabled || sample_rate == 0 {
-            return Vec::new();
+            return [None; BANDS];
         }
         let fs = f64::from(sample_rate);
-        BAND_FREQUENCIES
-            .iter()
-            .zip(self.bands_db)
-            .filter(|&(&f0, gain)| gain.abs() > 0.01 && f0 < MAX_RELATIVE_FREQUENCY * fs)
-            .map(|(&f0, gain)| BiquadCoeffs::peaking(fs, f0, BAND_Q, f64::from(clamp_gain(gain))))
-            .collect()
+        std::array::from_fn(|i| {
+            let (f0, gain) = (BAND_FREQUENCIES[i], self.bands_db[i]);
+            (gain.abs() > 0.01 && f0 < MAX_RELATIVE_FREQUENCY * fs)
+                .then(|| BiquadCoeffs::peaking(fs, f0, BAND_Q, f64::from(clamp_gain(gain))))
+        })
     }
 
     /// The overall response (preamp + all bands) at `freq` Hz, in dB.

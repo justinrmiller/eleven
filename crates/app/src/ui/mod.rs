@@ -68,7 +68,7 @@ pub struct UiState {
     /// About window open.
     pub show_about: bool,
     /// File-info window for this playlist index.
-    pub info: Option<usize>,
+    pub info: Option<EntryId>,
     /// Blink phase for the paused clock, in seconds.
     pub blink: f32,
     /// Skin chosen in the skin browser, waiting to be loaded (`Some(None)` = built-in).
@@ -476,9 +476,13 @@ impl ElevenApp {
             }
             Action::About => self.state.show_about = true,
             Action::FileInfo => {
+                // By id: the window keeps showing this entry when the list is reordered.
+                let playlist = self.controller.playlist();
                 self.state.info = self
                     .first_selected()
-                    .or_else(|| self.controller.playlist().current_index());
+                    .and_then(|i| playlist.get(i))
+                    .or_else(|| playlist.current())
+                    .map(eleven_core::Entry::id);
             }
             Action::AddFiles => {
                 let start = self.start_dir();

@@ -763,7 +763,47 @@ fn clutterbar_buttons() {
     r.click("Double size (D)");
     r.click("1. Fake Artist - Title of 00");
     r.click("File info (I)");
-    assert_eq!(r.app().state.info, Some(0));
+    let first = r
+        .app()
+        .controller
+        .playlist()
+        .get(0)
+        .map(eleven_core::Entry::id);
+    assert_eq!(r.app().state.info, first);
+}
+
+#[test]
+fn file_info_follows_its_entry_when_the_list_changes() {
+    let mut r = rig(3);
+    r.click("2. Fake Artist - Title of 01");
+    r.key_mod(cmd(), Key::I);
+    assert!(r.exists("Title of 01"));
+    // Reverse the list: the window keeps showing the same track, now at row 2 of 3.
+    r.app_mut().controller.playlist_mut().reverse();
+    r.harness.run_steps(2);
+    assert!(r.exists("Title of 01"));
+    assert!(!r.exists("Title of 02"));
+    // Removing the entry closes the window.
+    r.app_mut().controller.playlist_mut().clear();
+    r.harness.run_steps(2);
+    assert_eq!(r.app().state.info, None);
+}
+
+#[test]
+fn jump_highlight_stays_within_the_listed_results() {
+    let mut r = rig(0);
+    for i in 0..230 {
+        r.app_mut()
+            .controller
+            .add_location(&format!("/music/song{i:03}.mp3"));
+    }
+    r.key(Key::J);
+    // 230 matches, 200 listed: holding Down stops at the last listed one.
+    for _ in 0..240 {
+        r.harness.key_press(Key::ArrowDown);
+    }
+    r.harness.run_steps(2);
+    assert_eq!(r.app().state.jump.as_ref().map(|j| j.selected), Some(199));
 }
 
 #[test]

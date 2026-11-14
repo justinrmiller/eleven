@@ -48,13 +48,15 @@ fn jump(ctx: &Context, ctl: &mut Controller, st: &mut UiState) {
             i.key_pressed(Key::Enter),
         )
     });
+    // Only the first MAX_RESULTS are listed, so the highlight (and Enter) stays within them.
+    let last = results.len().min(MAX_RESULTS).saturating_sub(1);
     if down {
-        dialog.selected = (dialog.selected + 1).min(results.len().saturating_sub(1));
+        dialog.selected = (dialog.selected + 1).min(last);
     }
     if up {
         dialog.selected = dialog.selected.saturating_sub(1);
     }
-    dialog.selected = dialog.selected.min(results.len().saturating_sub(1));
+    dialog.selected = dialog.selected.min(last);
     let mut chosen = None;
     let modal = Modal::new(Id::unique("jump_dialog")).show(ctx, |ui| {
         ui.set_width(240.0);
@@ -340,10 +342,15 @@ pub fn home_relative(path: &Path, home: Option<&Path>) -> String {
 }
 
 fn file_info(ctx: &Context, ctl: &Controller, st: &mut UiState) {
-    let Some(index) = st.info else {
+    let Some(id) = st.info else {
         return;
     };
-    let Some(entry) = ctl.playlist().get(index) else {
+    let Some((index, entry)) = ctl
+        .playlist()
+        .index_of(id)
+        .and_then(|i| ctl.playlist().get(i).map(|e| (i, e)))
+    else {
+        // The entry was removed.
         st.info = None;
         return;
     };

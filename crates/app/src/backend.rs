@@ -453,6 +453,8 @@ pub mod fake {
         pub title: Option<String>,
         /// Last published state.
         pub state: Option<PlaybackState>,
+        /// Last published position.
+        pub position: Option<Duration>,
     }
 
     /// Media controls whose commands are injected by the test.
@@ -478,11 +480,10 @@ pub mod fake {
                 .unwrap_or_else(PoisonError::into_inner)
                 .title = Some(title.to_owned());
         }
-        fn set_playback(&mut self, state: PlaybackState, _: Duration) {
-            self.state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .state = Some(state);
+        fn set_playback(&mut self, state: PlaybackState, position: Duration) {
+            let mut s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            s.state = Some(state);
+            s.position = Some(position);
         }
     }
 

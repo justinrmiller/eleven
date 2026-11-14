@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eleven_core::PlayerEvent;
 use eleven_core::icy::{IcyDemuxer, parse_stream_title};
@@ -29,6 +29,9 @@ const READ_CHUNK: usize = 8 * 1024;
 const WAIT_SLICE: Duration = Duration::from_millis(50);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+/// A stream that delivers no data for this long while playback waits for it fails, instead
+/// of buffering forever (servers can stall without closing the connection).
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often a pending connect checks for an interrupt.
 const CONNECT_POLL: Duration = Duration::from_millis(20);
 
@@ -183,8 +186,7 @@ pub fn open_decoder(
     let (headers, body) = connect_interruptible(url, &interrupt, epoch)?;
     let source = StreamSource::spawn(body, headers.metaint, interrupt, epoch, on_event);
     let (ext, mime) = format_hint(headers.content_type.as_deref(), url);
-    let mut decoder =
-        Decoder::open_source(Box::new(ReadOnlySource::new(source)), ext, mime.as_deref())?;
+    let mut decoder = open_stream_decoder(source, ext, mime.as_deref())?;
     let info = decoder.info_mut();
     info.seekable = false;
     info.duration = None;
@@ -193,14 +195,49 @@ pub fn open_decoder(
     Ok(decoder)
 }
 
-#[derive(Default)]
+/// Probes `source` for its format. A stall while probing is reported as such, rather than as
+/// the "no suitable format" error the prober turns it into.
+fn open_stream_decoder(
+    source: StreamSource,
+    ext: Option<&str>,
+    mime: Option<&str>,
+) -> Result<Decoder> {
+    let inner = Arc::clone(&source.inner);
+    let timeout = source.stall_timeout;
+    Decoder::open_source(Box::new(ReadOnlySource::new(source)), ext, mime).map_err(|e| {
+        if inner.stalled.load(Ordering::Acquire) {
+            AudioError::Network(format!(
+                "stream stalled: no data for {} s",
+                timeout.as_secs()
+            ))
+        } else {
+            e
+        }
+    })
+}
+
 struct Buffer {
     data: VecDeque<u8>,
+    /// When data last arrived (or the stream started).
+    last_fill: Instant,
     closed: bool,
     error: Option<String>,
     /// While `true`, readers wait for [`PREBUFFER_BYTES`] before consuming.
     buffering: bool,
     last_percent: Option<u8>,
+}
+
+impl Buffer {
+    fn new() -> Self {
+        Self {
+            data: VecDeque::new(),
+            last_fill: Instant::now(),
+            closed: false,
+            error: None,
+            buffering: true,
+            last_percent: None,
+        }
+    }
 }
 
 struct Inner {
@@ -210,6 +247,8 @@ struct Inner {
     epoch: u64,
     /// Set when the [`StreamSource`] is dropped, e.g. after a decode error.
     dropped: AtomicBool,
+    /// Set when a read gave up because no data arrived for the stall timeout.
+    stalled: AtomicBool,
     on_event: OnEvent,
 }
 
@@ -222,6 +261,7 @@ impl Inner {
 /// The decoder-facing end of a network stream.
 pub struct StreamSource {
     inner: Arc<Inner>,
+    stall_timeout: Duration,
 }
 
 impl StreamSource {
@@ -235,14 +275,12 @@ impl StreamSource {
         on_event: OnEvent,
     ) -> Self {
         let inner = Arc::new(Inner {
-            buffer: Mutex::new(Buffer {
-                buffering: true,
-                ..Buffer::default()
-            }),
+            buffer: Mutex::new(Buffer::new()),
             changed: Condvar::new(),
             interrupt,
             epoch,
             dropped: AtomicBool::new(false),
+            stalled: AtomicBool::new(false),
             on_event,
         });
         let worker = Arc::clone(&inner);
@@ -254,7 +292,17 @@ impl StreamSource {
             buf.closed = true;
             buf.error = Some(format!("cannot start reader: {e}"));
         }
-        Self { inner }
+        Self {
+            inner,
+            stall_timeout: STALL_TIMEOUT,
+        }
+    }
+
+    /// Changes how long reads wait for data before failing (default [`STALL_TIMEOUT`]).
+    #[must_use]
+    pub fn with_stall_timeout(mut self, timeout: Duration) -> Self {
+        self.stall_timeout = timeout;
+        self
     }
 }
 
@@ -302,6 +350,9 @@ fn reader_thread(mut body: Box<dyn Read + Send + Sync>, metaint: usize, inner: &
                 .0;
         }
         buf.data.extend(&audio);
+        if !audio.is_empty() {
+            buf.last_fill = Instant::now();
+        }
         drop(buf);
         inner.changed.notify_all();
     }
@@ -361,6 +412,17 @@ impl Read for StreamSource {
                 };
             } else {
                 buf.buffering = true;
+            }
+            // Waiting for data: give up on a server that stopped sending.
+            if buf.last_fill.elapsed() >= self.stall_timeout {
+                inner.stalled.store(true, Ordering::Release);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "stream stalled: no data for {} s",
+                        self.stall_timeout.as_secs()
+                    ),
+                ));
             }
             buf = inner
                 .changed
@@ -547,6 +609,60 @@ mod tests {
         );
     }
 
+    /// A body that delivers `n` bytes and then blocks (like a stalled server).
+    struct Stalls(usize);
+    impl Read for Stalls {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 == 0 {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+            let n = out.len().min(self.0);
+            self.0 -= n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn a_stalled_stream_times_out() {
+        let (on, _events) = collector();
+        let mut src = StreamSource::spawn(
+            Box::new(Stalls(PREBUFFER_BYTES * 2)),
+            0,
+            Arc::new(AtomicU64::new(0)),
+            0,
+            on,
+        )
+        .with_stall_timeout(Duration::from_millis(300));
+        // Everything that arrived is still played...
+        let mut got = 0;
+        let mut chunk = [0u8; 4096];
+        let err = loop {
+            match src.read(&mut chunk) {
+                Ok(n) => got += n,
+                Err(e) => break e,
+            }
+        };
+        assert_eq!(got, PREBUFFER_BYTES * 2);
+        // ...then the stall is reported instead of buffering forever.
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(err.to_string().contains("stalled"));
+    }
+
+    #[test]
+    fn a_stream_that_stalls_before_playing_reports_the_stall() {
+        let (on, _events) = collector();
+        let src = StreamSource::spawn(
+            Box::new(Stalls(1_000)),
+            0,
+            Arc::new(AtomicU64::new(0)),
+            0,
+            on,
+        )
+        .with_stall_timeout(Duration::from_millis(200));
+        let err = open_stream_decoder(src, Some("mp3"), None).unwrap_err();
+        assert!(err.to_string().contains("stream stalled"), "{err}");
+    }
+
     #[test]
     fn interrupted_connects_return_promptly() {
         // Accepts the connection but never answers, like a stalled server.
@@ -558,7 +674,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
             flag.fetch_add(1, Ordering::AcqRel);
         });
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let Err(err) = connect_interruptible(&url, &interrupt, 1) else {
             panic!("connect must fail");
         };
