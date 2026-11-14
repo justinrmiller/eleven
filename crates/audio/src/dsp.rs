@@ -1,6 +1,6 @@
 //! Real-time DSP: the equaliser filter cascade, preamp, clip guard, volume and balance.
 
-use eleven_core::eq::{BiquadCoeffs, EqSettings};
+use eleven_core::eq::{BANDS, BiquadCoeffs, EqSettings};
 
 /// One biquad section in transposed direct form II, with `f64` state for low-frequency
 /// precision.
@@ -20,6 +20,11 @@ impl Biquad {
         }
     }
 
+    fn clear(&mut self) {
+        self.z1 = 0.0;
+        self.z2 = 0.0;
+    }
+
     #[inline]
     fn process(&mut self, x: f64) -> f64 {
         let y = self.c.b0 * x + self.z1;
@@ -35,8 +40,9 @@ pub struct Equalizer {
     sample_rate: u32,
     settings: EqSettings,
     preamp: f32,
-    /// One `[left, right]` pair of filters per active band.
-    filters: Vec<[Biquad; 2]>,
+    /// One `[left, right]` filter pair per band; `None` while the band is flat (bypassed).
+    /// Each band keeps its own slot, so changing one band never disturbs another's state.
+    filters: [Option<[Biquad; 2]>; BANDS],
 }
 
 impl Equalizer {
@@ -47,7 +53,7 @@ impl Equalizer {
             sample_rate,
             settings: EqSettings::default(),
             preamp: 1.0,
-            filters: Vec::new(),
+            filters: [None; BANDS],
         }
     }
 
@@ -57,8 +63,8 @@ impl Equalizer {
         &self.settings
     }
 
-    /// Applies new settings. Filter state is kept when the band layout is unchanged, so
-    /// dragging a slider does not click.
+    /// Applies new settings. Each band keeps its filter state while it stays active, so
+    /// dragging a slider (even through 0 dB, which only bypasses that band) does not click.
     pub fn set_settings(&mut self, settings: &EqSettings) {
         self.settings = settings.sanitized();
         self.rebuild();
@@ -68,41 +74,39 @@ impl Equalizer {
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         if sample_rate != self.sample_rate {
             self.sample_rate = sample_rate;
-            self.filters.clear();
+            self.filters = [None; BANDS];
             self.rebuild();
         }
     }
 
     fn rebuild(&mut self) {
-        let coeffs = self.settings.design(self.sample_rate);
         self.preamp = self.settings.preamp_gain();
-        if coeffs.len() == self.filters.len() {
-            for (pair, c) in self.filters.iter_mut().zip(coeffs) {
-                pair[0].c = c;
-                pair[1].c = c;
+        let design = self.settings.design_bands(self.sample_rate);
+        for (slot, coeffs) in self.filters.iter_mut().zip(design) {
+            match (slot.as_mut(), coeffs) {
+                // Still active: new coefficients, same state.
+                (Some(pair), Some(c)) => {
+                    pair[0].c = c;
+                    pair[1].c = c;
+                }
+                // Newly active: a bypassed band starts from rest.
+                (None, Some(c)) => *slot = Some([Biquad::new(c), Biquad::new(c)]),
+                (_, None) => *slot = None,
             }
-        } else {
-            self.filters = coeffs
-                .into_iter()
-                .map(|c| [Biquad::new(c), Biquad::new(c)])
-                .collect();
         }
     }
 
     /// Clears filter memory (after a seek or track change).
     pub fn reset(&mut self) {
-        for pair in &mut self.filters {
-            for f in pair {
-                f.z1 = 0.0;
-                f.z2 = 0.0;
-            }
+        for f in self.filters.iter_mut().flatten().flatten() {
+            f.clear();
         }
     }
 
     /// `true` if processing would change the signal.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        !self.filters.is_empty() || (self.preamp - 1.0).abs() > f32::EPSILON
+        self.filters.iter().any(Option::is_some) || (self.preamp - 1.0).abs() > f32::EPSILON
     }
 
     /// Processes interleaved stereo audio in place.
@@ -113,7 +117,7 @@ impl Equalizer {
         for frame in interleaved.as_chunks_mut::<2>().0 {
             for (ch, sample) in frame.iter_mut().enumerate() {
                 let mut x = f64::from(*sample * self.preamp);
-                for pair in &mut self.filters {
+                for pair in self.filters.iter_mut().flatten() {
                     x = pair[ch].process(x);
                 }
                 // Narrowing back to the f32 output format is intended.
@@ -258,30 +262,69 @@ mod tests {
         eq.set_settings(&s);
         let mut buf = sine(60.0, 0.5, 256);
         eq.process(&mut buf);
-        let state_before = eq.filters[0][0].z1;
-        s.bands_db[0] = 4.0; // same layout: state kept
+        let state = |eq: &Equalizer, band: usize| eq.filters[band].map(|p| p[0].z1);
+        let state_before = state(&eq, 0);
+        assert!(state_before.is_some_and(|z| z != 0.0));
+        s.bands_db[0] = 4.0; // same band, new gain: state kept
         eq.set_settings(&s);
-        assert!((eq.filters[0][0].z1 - state_before).abs() < f64::EPSILON);
-        s.bands_db[1] = 4.0; // new band: rebuilt
+        assert_eq!(state(&eq, 0), state_before);
+        s.bands_db[1] = 4.0; // another band switched on: band 0 untouched, band 1 at rest
         eq.set_settings(&s);
-        assert_eq!(eq.filters.len(), 2);
+        assert_eq!(state(&eq, 0), state_before);
+        assert_eq!(state(&eq, 1), Some(0.0));
         eq.reset();
         assert!(
             eq.filters
                 .iter()
                 .flatten()
+                .flatten()
                 .all(|f| f.z1 == 0.0 && f.z2 == 0.0)
         );
         eq.set_sample_rate(22_050);
         eq.set_sample_rate(22_050);
-        assert_eq!(eq.filters.len(), 2);
+        assert_eq!(eq.filters.iter().flatten().count(), 2);
         s.bands_db = [6.0; BANDS];
         eq.set_settings(&s);
         assert_eq!(
-            eq.filters.len(),
+            eq.filters.iter().flatten().count(),
             7,
             "bands above 0.45 fs are skipped at 22.05 kHz"
         );
+    }
+
+    #[test]
+    fn a_band_crossing_zero_leaves_the_others_alone() {
+        let mut s = EqSettings {
+            enabled: true,
+            ..EqSettings::default()
+        };
+        s.bands_db[2] = 6.0; // 310 Hz
+        s.bands_db[4] = 6.0; // 1 kHz
+        let mut eq = Equalizer::new(FS);
+        eq.set_settings(&s);
+        let mut buf = sine(310.0, 0.3, 4_096);
+        eq.process(&mut buf);
+        let before = eq.filters[4];
+        // Dragging the 310 Hz slider through the centre bypasses only that band...
+        s.bands_db[2] = 0.0;
+        eq.set_settings(&s);
+        assert!(eq.filters[2].is_none());
+        let after = eq.filters[4].unwrap();
+        assert_eq!(before.unwrap()[0].z1, after[0].z1, "1 kHz state kept");
+        // ...and a band switched on at the same time starts from rest instead of inheriting
+        // another band's state (the old code kept state per position in a compacted list).
+        s.bands_db[8] = 6.0; // 12 kHz
+        eq.set_settings(&s);
+        assert!(eq.filters[8].is_some_and(|p| p[0].z1 == 0.0 && p[1].z2 == 0.0));
+        // Output matches a fresh equaliser with the same bands, apart from band 4's history.
+        let mut fresh = Equalizer::new(FS);
+        fresh.set_settings(&s);
+        fresh.filters[4] = eq.filters[4];
+        let mut a = sine(1_000.0, 0.3, 512);
+        let mut b = a.clone();
+        eq.process(&mut a);
+        fresh.process(&mut b);
+        assert_eq!(a, b);
     }
 
     #[test]

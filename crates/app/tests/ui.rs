@@ -567,7 +567,7 @@ fn write_skin(dir: &Path, name: &str) -> PathBuf {
 }
 
 #[test]
-fn skins_load_from_config_preferences_and_dialog() {
+fn skins_load_from_config_browser_and_file_dialog() {
     let dir = tempfile::tempdir().unwrap();
     let skins = dir.path().join("skins");
     std::fs::create_dir_all(&skins).unwrap();
@@ -592,13 +592,22 @@ fn skins_load_from_config_preferences_and_dialog() {
     r.click("Play");
     r.harness.run_steps(3);
 
-    // Preferences lists the skins directory.
-    r.key_mod(cmd(), Key::P);
+    // The skin browser (menu -> Skins...) lists the skins directory and stays open.
+    r.click("Menu");
+    r.click("Skins...");
+    r.harness.run_steps(5); // the window fades in
+    assert!(r.app().state.show_skins);
+    assert!(
+        r.harness
+            .query_by_label_contains("Add .wsz files to")
+            .is_some()
+    );
     r.click("Beta");
     assert_eq!(r.app().look_name(), "Beta");
     r.click("Built-in");
     assert_eq!(r.app().look_name(), "Built-in");
     assert_eq!(r.app().controller.config().skin, None);
+    assert!(r.app().state.show_skins);
 
     // "Load skin file..." uses the chooser.
     r.click("Load skin file...");
@@ -620,6 +629,66 @@ fn skins_load_from_config_preferences_and_dialog() {
             .as_deref()
             .is_some_and(|e| e.contains("Broken"))
     );
+}
+
+#[test]
+fn skins_open_in_their_own_window_under_preferences() {
+    let dir = tempfile::tempdir().unwrap();
+    write_skin(dir.path(), "Alpha.wsz");
+    let mut r = rig_with(
+        Config::default(),
+        2,
+        FakeChooser::default(),
+        Some(dir.path().to_owned()),
+    );
+    // The menu lists "Skins..." directly below "Preferences...".
+    r.click("Menu");
+    let prefs = r.harness.get_by_label("Preferences...").rect();
+    let skins = r.harness.get_by_label("Skins...").rect();
+    let about = r.harness.get_by_label("About eleven").rect();
+    assert!(
+        skins.top() >= prefs.bottom() - 1.0 && skins.top() - prefs.bottom() < 8.0,
+        "{prefs:?} then {skins:?}"
+    );
+    assert!(about.top() >= skins.bottom() - 1.0);
+    r.click("Skins...");
+    r.harness.run_steps(5); // the window fades in
+    // (Headless, the window is embedded in the player; natively it is its own window.)
+    assert!(r.exists("Skins"));
+    assert!(r.exists("Built-in"));
+    assert!(r.exists("Alpha"));
+
+    // Not modal: the player keeps working while the browser is open.
+    r.key(Key::X);
+    assert_eq!(r.plays(), [file(0)]);
+    assert!(r.app().state.show_skins);
+
+    // Skins copied into the folder show up while it stays open.
+    write_skin(dir.path(), "Beta.wsz");
+    r.harness.run_steps(70); // a little over a second of frames
+    assert!(r.exists("Beta"));
+
+    // (The title bar has a "Close" button too: click the browser's.)
+    r.harness
+        .get_by_role(egui::accesskit::Role::Window)
+        .get_by_label("Close")
+        .click();
+    r.harness.run_steps(2);
+    assert!(!r.app().state.show_skins);
+    assert!(!r.exists("Built-in"));
+
+    // Alt+S opens it too, and Escape closes it.
+    r.key_mod(Modifiers::ALT, Key::S);
+    assert!(r.app().state.show_skins);
+    r.key(Key::Escape);
+    assert!(!r.app().state.show_skins);
+
+    // Preferences no longer has a skin section.
+    r.key_mod(cmd(), Key::P);
+    r.harness.run_steps(2);
+    assert!(r.exists("Scroll long titles"));
+    assert!(!r.exists("Built-in"));
+    assert!(!r.exists("Load skin file..."));
 }
 
 #[test]
@@ -694,7 +763,47 @@ fn clutterbar_buttons() {
     r.click("Double size (D)");
     r.click("1. Fake Artist - Title of 00");
     r.click("File info (I)");
-    assert_eq!(r.app().state.info, Some(0));
+    let first = r
+        .app()
+        .controller
+        .playlist()
+        .get(0)
+        .map(eleven_core::Entry::id);
+    assert_eq!(r.app().state.info, first);
+}
+
+#[test]
+fn file_info_follows_its_entry_when_the_list_changes() {
+    let mut r = rig(3);
+    r.click("2. Fake Artist - Title of 01");
+    r.key_mod(cmd(), Key::I);
+    assert!(r.exists("Title of 01"));
+    // Reverse the list: the window keeps showing the same track, now at row 2 of 3.
+    r.app_mut().controller.playlist_mut().reverse();
+    r.harness.run_steps(2);
+    assert!(r.exists("Title of 01"));
+    assert!(!r.exists("Title of 02"));
+    // Removing the entry closes the window.
+    r.app_mut().controller.playlist_mut().clear();
+    r.harness.run_steps(2);
+    assert_eq!(r.app().state.info, None);
+}
+
+#[test]
+fn jump_highlight_stays_within_the_listed_results() {
+    let mut r = rig(0);
+    for i in 0..230 {
+        r.app_mut()
+            .controller
+            .add_location(&format!("/music/song{i:03}.mp3"));
+    }
+    r.key(Key::J);
+    // 230 matches, 200 listed: holding Down stops at the last listed one.
+    for _ in 0..240 {
+        r.harness.key_press(Key::ArrowDown);
+    }
+    r.harness.run_steps(2);
+    assert_eq!(r.app().state.jump.as_ref().map(|j| j.selected), Some(199));
 }
 
 #[test]

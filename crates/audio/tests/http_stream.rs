@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use common::fixture;
 use eleven_audio::{Engine, OutputSpec};
-use eleven_core::{Location, PlayerEvent, icy};
+use eleven_core::{Location, PlaybackState, PlayerEvent, icy};
 
 /// Serves a single response on a random local port and returns the URL.
 fn serve_once(response: impl FnOnce(TcpStream) + Send + 'static) -> String {
@@ -228,4 +228,45 @@ fn events_of_a_replaced_stream_keep_its_generation() {
         }
     }
     assert!(stream_events >= 1);
+}
+
+#[test]
+fn pause_works_while_a_stream_has_stalled() {
+    // Four seconds of MP3 (more than the prebuffer), then the server stalls without closing
+    // the connection.
+    let audio = std::fs::read(fixture("tone.mp3")).unwrap().repeat(4);
+    let url = serve_once(move |mut s| {
+        let _ = s.write_all(b"HTTP/1.0 200 OK\r\nContent-Type: audio/mpeg\r\n\r\n");
+        let _ = s.write_all(&audio);
+        std::thread::sleep(Duration::from_secs(30));
+    });
+    let engine = engine();
+    engine.play(Location::Url(url));
+    wait_for(&engine, |e| matches!(e, PlayerEvent::Started(_)));
+    // The fast output drains what arrived; the engine thread then waits for more data.
+    wait_for(
+        &engine,
+        |e| matches!(e, PlayerEvent::Buffering(p) if *p < 100),
+    );
+    assert_eq!(engine.state(), PlaybackState::Playing);
+    engine.pause();
+    assert_eq!(
+        engine.state(),
+        PlaybackState::Paused,
+        "pause applies at once"
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(engine.state(), PlaybackState::Paused);
+    engine.resume();
+    assert_eq!(engine.state(), PlaybackState::Playing);
+    // Stop interrupts the blocked read, so the engine stops promptly too.
+    let start = Instant::now();
+    engine.stop();
+    while engine.state() != PlaybackState::Stopped {
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "stop waited for the stream"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }

@@ -3,6 +3,7 @@
 //! Entries are identified by a stable [`EntryId`] so that the current track, the shuffle order
 //! and asynchronous metadata updates survive sorting, moving and removal of other entries.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -28,7 +29,15 @@ impl Location {
             return Self::Url(trimmed.to_owned());
         }
         if lower.starts_with("file://") {
-            return Self::File(PathBuf::from(percent_decode(&trimmed["file://".len()..])));
+            // `file:///path` and `file://localhost/path` both name a local file.
+            let mut rest = &trimmed["file://".len()..];
+            if rest
+                .get(.."localhost/".len())
+                .is_some_and(|h| h.eq_ignore_ascii_case("localhost/"))
+            {
+                rest = &rest["localhost".len()..];
+            }
+            return Self::File(PathBuf::from(percent_decode(rest)));
         }
         let path = PathBuf::from(trimmed);
         match base_dir {
@@ -381,9 +390,9 @@ impl Playlist {
     }
 
     fn after_removal(&mut self) {
-        let entries = &self.entries;
-        self.shuffle_order
-            .retain(|id| entries.iter().any(|e| e.id == *id));
+        // A set keeps this linear: removing from a 20 000-entry list must not stall the UI.
+        let remaining: HashSet<EntryId> = self.entries.iter().map(|e| e.id).collect();
+        self.shuffle_order.retain(|id| remaining.contains(id));
         if let Some(id) = self.current
             && self.index_of(id).is_none()
         {
@@ -777,6 +786,14 @@ mod tests {
             Location::Url("http://radio.example/stream".into())
         );
         assert!(Location::parse("HTTPS://X", None).is_url());
+        assert_eq!(
+            Location::parse("file://localhost/tmp/My%20Song.flac", None),
+            Location::File(PathBuf::from("/tmp/My Song.flac"))
+        );
+        assert_eq!(
+            Location::parse("FILE://LocalHost/tmp/x.ogg", None),
+            Location::File(PathBuf::from("/tmp/x.ogg"))
+        );
         assert_eq!(
             Location::parse("file:///tmp/My%20Song.flac", None),
             Location::File("/tmp/My Song.flac".into())

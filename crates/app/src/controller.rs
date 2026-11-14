@@ -5,6 +5,7 @@
 //! which makes all of this testable with fakes.
 
 use std::collections::HashSet;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -38,6 +39,38 @@ pub struct Persistence {
     pub config_file: Option<PathBuf>,
     /// The auto-saved playlist (M3U).
     pub playlist_file: Option<PathBuf>,
+}
+
+/// Mutable access to the controller's playlist (see [`Controller::playlist_mut`]). Dropping it
+/// refreshes the title display, so no edit (clear, reverse, crop...) leaves it stale.
+pub struct PlaylistEdit<'a> {
+    controller: &'a mut Controller,
+}
+
+impl Deref for PlaylistEdit<'_> {
+    type Target = Playlist;
+    fn deref(&self) -> &Playlist {
+        &self.controller.playlist
+    }
+}
+
+impl DerefMut for PlaylistEdit<'_> {
+    fn deref_mut(&mut self) -> &mut Playlist {
+        &mut self.controller.playlist
+    }
+}
+
+impl Drop for PlaylistEdit<'_> {
+    fn drop(&mut self) {
+        self.controller.refresh_marquee();
+    }
+}
+
+/// Makes `path` absolute against the current directory. Playlist entries must not depend on
+/// the directory eleven was started from: the saved playlist resolves relative paths against
+/// its own folder.
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_owned())
 }
 
 /// The player.
@@ -157,9 +190,10 @@ impl Controller {
         &self.playlist
     }
 
-    /// Mutable playlist access for editing commands (selection, sorting, removal...).
-    pub fn playlist_mut(&mut self) -> &mut Playlist {
-        &mut self.playlist
+    /// Mutable playlist access for editing commands (selection, sorting, removal...). The
+    /// title display is brought up to date when the returned guard is dropped.
+    pub fn playlist_mut(&mut self) -> PlaylistEdit<'_> {
+        PlaylistEdit { controller: self }
     }
 
     /// Transport state.
@@ -265,6 +299,7 @@ impl Controller {
                 self.handle_event(event);
             }
         }
+        let shown = self.display_entry().map(|(_, e)| e.id());
         for (id, tags) in self.tags.poll() {
             if tags.title.is_some() || tags.artist.is_some() {
                 // Tags replace the title saved in the playlist file (which may be a display
@@ -274,7 +309,8 @@ impl Controller {
             } else {
                 self.playlist.update_metadata(id, None, None, tags.duration);
             }
-            if self.playlist.current_id() == Some(id) && self.stream_title.is_none() {
+            // The title display shows the current entry, or the first one when nothing is.
+            if shown == Some(id) && self.stream_title.is_none() {
                 self.refresh_marquee();
             }
         }
@@ -340,8 +376,7 @@ impl Controller {
                 self.refresh_marquee();
             }
             PlayerEvent::Finished => {
-                self.generation = None;
-                self.buffering = None;
+                self.end_track();
                 if self.playlist.next_track().is_some() {
                     self.play_current();
                 } else {
@@ -349,8 +384,7 @@ impl Controller {
                 }
             }
             PlayerEvent::Error(msg) => {
-                self.generation = None;
-                self.buffering = None;
+                self.end_track();
                 self.consecutive_errors += 1;
                 log::warn!("playback error: {msg}");
                 self.show_message(&format!("Error: {msg}"));
@@ -362,6 +396,15 @@ impl Controller {
                 }
             }
         }
+    }
+
+    /// Forgets the track that just stopped, ended or failed: its length, stream title and
+    /// buffering state must not label the next entry shown.
+    fn end_track(&mut self) {
+        self.generation = None;
+        self.buffering = None;
+        self.track = None;
+        self.stream_title = None;
     }
 
     fn handle_media(&mut self, cmd: MediaCommand) {
@@ -502,8 +545,7 @@ impl Controller {
     /// Stops playback.
     pub fn stop(&mut self) {
         self.backend.stop();
-        self.generation = None;
-        self.buffering = None;
+        self.end_track();
         self.refresh_marquee();
     }
 
@@ -534,8 +576,14 @@ impl Controller {
     /// Seeks to a fraction (`0.0..=1.0`) of the track.
     pub fn seek_fraction(&mut self, fraction: f32) {
         if let Some(d) = self.duration().filter(|_| self.seekable()) {
-            self.backend.seek(d.mul_f32(fraction.clamp(0.0, 1.0)));
+            self.seek_to(d.mul_f32(fraction.clamp(0.0, 1.0)));
         }
+    }
+
+    fn seek_to(&mut self, target: Duration) {
+        self.backend.seek(target);
+        // OS media widgets extrapolate from the last published position: tell them.
+        self.media.set_playback(self.state(), target);
     }
 
     /// Seeks forwards (`forward = true`) or backwards by `step`.
@@ -550,7 +598,7 @@ impl Controller {
             pos.saturating_sub(step)
         };
         let target = self.duration().map_or(target, |d| target.min(d));
-        self.backend.seek(target);
+        self.seek_to(target);
     }
 
     // ----------------------------------------------------------------------------------------
@@ -715,6 +763,8 @@ impl Controller {
     /// Adds files, folders (recursively) and playlist files. Returns the number of entries
     /// added. Tags are requested for new local files.
     pub fn add_paths(&mut self, paths: &[PathBuf]) -> usize {
+        let paths: Vec<PathBuf> = paths.iter().map(|p| absolute(p)).collect();
+        let paths = paths.as_slice();
         let mut added = 0;
         for path in paths {
             if path.is_dir() {
@@ -755,7 +805,10 @@ impl Controller {
         if text.is_empty() {
             return false;
         }
-        let location = Location::parse(text, None);
+        let location = match Location::parse(text, None) {
+            Location::File(path) => Location::File(absolute(&path)),
+            url @ Location::Url(_) => url,
+        };
         let id = self.playlist.push(location.clone());
         if let Location::File(p) = &location {
             self.tags.request(id, p);
@@ -777,6 +830,7 @@ impl Controller {
                         self.tags.request(id, p);
                     }
                 }
+                self.refresh_marquee();
                 n
             }
             Err(e) => {
@@ -1404,6 +1458,115 @@ mod tests {
             Some("Spinal Tap - Gimme Some Money")
         );
         assert!(!r.c.add_location("  "));
+    }
+
+    #[test]
+    fn stopping_forgets_the_old_track_details() {
+        let mut r = rig();
+        r.c.add_location("/music/00.mp3");
+        r.c.add_location("/music/01.mp3");
+        r.c.update(0.0);
+        r.c.play();
+        // A 3-minute track (the fake tags say 1 minute, as the next entry has).
+        push_event(&r, PlayerEvent::Started(info(true, Some(180))));
+        r.c.update(0.0);
+        assert!(r.c.title_text().contains("(3:00)"));
+        r.c.stop();
+        r.c.next(); // stopped: only moves the cursor
+        assert!(
+            r.c.title_text()
+                .contains("2. Fake Artist - Title of 01 (1:00)"),
+            "{}",
+            r.c.title_text()
+        );
+        assert_eq!(r.c.duration(), Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn a_stream_title_does_not_outlive_the_stream() {
+        let mut r = rig();
+        r.c.add_location("http://radio.example/live");
+        r.c.add_location("/music/01.mp3");
+        r.c.update(0.0);
+        r.c.play();
+        push_event(&r, PlayerEvent::Started(info(false, None)));
+        push_event(&r, PlayerEvent::StreamTitle("Some Song".into()));
+        r.c.update(0.0);
+        r.c.stop();
+        r.c.next();
+        assert!(
+            !r.c.title_text().contains("Some Song"),
+            "{}",
+            r.c.title_text()
+        );
+    }
+
+    #[test]
+    fn seeking_republishes_the_position_to_media_controls() {
+        let mut r = with_tracks(1);
+        r.c.play();
+        push_event(&r, PlayerEvent::Started(info(true, Some(300))));
+        r.c.update(0.0);
+        r.c.seek_fraction(0.8);
+        let published = r.media.lock().unwrap().position.unwrap();
+        assert!(published.abs_diff(Duration::from_secs(240)) < Duration::from_millis(1));
+        r.c.seek_relative(SEEK_STEP, false);
+        assert!(r.media.lock().unwrap().position.is_some());
+    }
+
+    #[test]
+    fn playlist_edits_refresh_the_title_display() {
+        let mut r = with_tracks(3);
+        r.c.next();
+        r.c.next(); // current: entry 2 ("2. ..." is shown as "2.")
+        assert!(r.c.title_text().starts_with("2. "), "{}", r.c.title_text());
+        r.c.playlist_mut().reverse();
+        assert!(r.c.title_text().starts_with("2. "), "{}", r.c.title_text());
+        r.c.playlist_mut().select(0, SelectMode::Single);
+        r.c.playlist_mut().crop();
+        assert!(r.c.title_text().starts_with("1. "), "{}", r.c.title_text());
+        r.c.playlist_mut().clear();
+        assert_eq!(r.c.title_text(), "eleven - it goes to eleven");
+    }
+
+    #[test]
+    fn tags_for_the_first_entry_update_the_display_when_nothing_is_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let list = dir.path().join("list.m3u");
+        std::fs::write(&list, "#EXTM3U\n#EXTINF:5,Saved title\n/music/song.mp3\n").unwrap();
+        let mut r = rig();
+        r.c.load_playlist(&list);
+        assert!(r.c.title_text().contains("Saved title"));
+        r.c.update(0.0); // the tag reader answers
+        assert!(
+            r.c.title_text().contains("Fake Artist - Title of song"),
+            "{}",
+            r.c.title_text()
+        );
+    }
+
+    #[test]
+    fn relative_paths_are_stored_absolute() {
+        let mut r = rig();
+        r.c.add_location("music/relative.mp3");
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            r.c.playlist().get(0).unwrap().location,
+            Location::File(cwd.join("music/relative.mp3"))
+        );
+        // A folder given relative to the current directory.
+        let dir = tempfile::tempdir_in(".").unwrap();
+        std::fs::write(dir.path().join("a.mp3"), b"").unwrap();
+        let rel = dir
+            .path()
+            .strip_prefix(&cwd)
+            .unwrap_or(dir.path())
+            .to_owned();
+        assert!(r.c.add_paths(&[rel]) == 1);
+        match &r.c.playlist().get(1).unwrap().location {
+            Location::File(p) => assert!(p.is_absolute(), "{p:?}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

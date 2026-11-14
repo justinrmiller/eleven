@@ -28,6 +28,8 @@ pub struct Shared {
     flush_acked: AtomicU64,
     frames_played: AtomicU64,
     underruns: AtomicU64,
+    /// Set by the output when its stream died (device unplugged, stream invalidated).
+    stream_lost: AtomicBool,
 }
 
 impl Default for Shared {
@@ -40,6 +42,7 @@ impl Default for Shared {
             flush_acked: AtomicU64::new(0),
             frames_played: AtomicU64::new(0),
             underruns: AtomicU64::new(0),
+            stream_lost: AtomicBool::new(false),
         }
     }
 }
@@ -90,6 +93,23 @@ impl Shared {
     #[must_use]
     pub fn underruns(&self) -> u64 {
         self.underruns.load(Ordering::Relaxed)
+    }
+
+    /// Called by an output whose stream stopped for good; the engine then reopens the output.
+    pub fn report_stream_lost(&self) {
+        self.stream_lost.store(true, Ordering::Release);
+    }
+
+    /// Whether the output reported a lost stream since the last call (clears the report).
+    pub fn take_stream_lost(&self) -> bool {
+        self.stream_lost.swap(false, Ordering::AcqRel)
+    }
+
+    /// `true` while a flush has been requested but the output has not performed it yet (after
+    /// [`Shared::flush`] timed out). Anything pushed meanwhile would be discarded by it.
+    #[must_use]
+    pub fn flush_pending(&self) -> bool {
+        self.flush_acked.load(Ordering::Acquire) < self.flush_requested.load(Ordering::Acquire)
     }
 
     /// Asks the output to discard everything buffered and reset the played-frame counter, then
@@ -279,6 +299,26 @@ mod tests {
         let shared = Arc::new(Shared::default());
         let p = Pipes::new(Arc::clone(&shared), 8_000);
         (shared, p)
+    }
+
+    #[test]
+    fn a_timed_out_flush_stays_pending_until_the_output_runs() {
+        let (shared, mut p) = pipes();
+        assert!(!shared.flush_pending());
+        // No render call: the flush times out but is still owed.
+        assert!(!shared.flush(Duration::from_millis(5)));
+        assert!(shared.flush_pending());
+        let mut out = [0.0f32; 8];
+        p.renderer.render(&mut out, 2);
+        assert!(!shared.flush_pending());
+        // A newly opened output acknowledges older requests straight away.
+        assert!(!shared.flush(Duration::from_millis(5)));
+        let _fresh = Pipes::new(Arc::clone(&shared), 8_000);
+        assert!(!shared.flush_pending());
+        assert!(!shared.take_stream_lost());
+        shared.report_stream_lost();
+        assert!(shared.take_stream_lost());
+        assert!(!shared.take_stream_lost(), "the report is taken once");
     }
 
     #[test]

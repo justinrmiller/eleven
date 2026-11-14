@@ -24,6 +24,9 @@ use egui::{Color32, Context, Event, Ui, Vec2, ViewportCommand, WindowLevel};
 use eleven_core::{EntryId, PlaybackState};
 
 use crate::backend::FileChooser;
+
+/// How often the open skin browser re-reads the skins folder, in seconds.
+pub const SKINS_RESCAN_SECS: f64 = 1.0;
 use crate::controller::{Controller, SEEK_STEP, VOLUME_STEP};
 use actions::{Action, shortcut};
 use dialogs::JumpDialog;
@@ -49,18 +52,26 @@ pub struct UiState {
     pub preset_name: Option<String>,
     /// Preferences window open.
     pub show_prefs: bool,
-    /// Skins listed in preferences, read when it opens.
+    /// Skin browser open.
+    pub show_skins: bool,
+    /// Skins listed in the skin browser (re-read every [`SKINS_RESCAN_SECS`] while open).
     pub skins: Option<Vec<PathBuf>>,
+    /// When `skins` was read (input time).
+    skins_read_at: f64,
+    /// "Add .wsz files to <folder>", shown in the skin browser.
+    pub skins_hint: Option<String>,
+    /// Where the skin browser window opens: beside the player.
+    pub skins_window_pos: Option<egui::Pos2>,
     /// Output devices listed in preferences, queried when it opens (enumerating devices can
     /// take a while, e.g. with ALSA).
     pub devices: Option<Vec<String>>,
     /// About window open.
     pub show_about: bool,
     /// File-info window for this playlist index.
-    pub info: Option<usize>,
+    pub info: Option<EntryId>,
     /// Blink phase for the paused clock, in seconds.
     pub blink: f32,
-    /// Skin chosen in preferences, waiting to be loaded (`Some(None)` = built-in).
+    /// Skin chosen in the skin browser, waiting to be loaded (`Some(None)` = built-in).
     pub pending_skin: Option<Option<PathBuf>>,
     /// Last skin loading error.
     pub skin_error: Option<String>,
@@ -146,6 +157,29 @@ impl ElevenApp {
             .unwrap_or_default();
         skins.sort();
         skins
+    }
+
+    /// Keeps the skin browser's list current while it is open, so skins copied into the folder
+    /// show up without reopening it.
+    fn refresh_skin_list(&mut self, ctx: &Context) {
+        if !self.state.show_skins {
+            self.state.skins = None;
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        if self.state.skins.is_none() || now - self.state.skins_read_at >= SKINS_RESCAN_SECS {
+            self.state.skins = Some(self.available_skins());
+            self.state.skins_read_at = now;
+        }
+        if self.state.skins_hint.is_none()
+            && let Some(dir) = &self.skins_dir
+        {
+            let home = directories::BaseDirs::new().map(|b| b.home_dir().to_owned());
+            self.state.skins_hint = Some(format!(
+                "Add .wsz files to {}",
+                dialogs::home_relative(dir, home.as_deref())
+            ));
+        }
     }
 
     /// Switches to a `.wsz` skin, or back to the built-in look with `None`.
@@ -279,14 +313,10 @@ impl ElevenApp {
                 pl,
             ));
         }
-        if self.state.show_prefs {
-            if self.state.skins.is_none() {
-                self.state.skins = Some(self.available_skins());
-            }
-        } else {
-            self.state.skins = None;
+        if !self.state.show_prefs {
             self.state.devices = None;
         }
+        self.refresh_skin_list(&ctx);
         actions.extend(dialogs::show(&ctx, &mut self.controller, &mut self.state));
         actions.extend(self.keyboard(&ctx));
         self.drag_and_drop(&ctx, ui);
@@ -300,9 +330,10 @@ impl ElevenApp {
     }
 
     fn keyboard(&mut self, ctx: &Context) -> Vec<Action> {
+        // Text fields and modal dialogs own the keyboard.
         if ctx.egui_wants_keyboard_input()
-            || self.state.jump.is_some()
-            || self.state.location.is_some()
+            || dialogs::modal_open(&self.state)
+            || ctx.memory(|m| m.top_modal_layer().is_some())
         {
             return Vec::new();
         }
@@ -434,11 +465,24 @@ impl ElevenApp {
             Action::JumpToFile => self.state.jump = Some(JumpDialog::default()),
             Action::OpenLocation => self.state.location = Some(String::new()),
             Action::Preferences => self.state.show_prefs = true,
+            Action::Skins => {
+                if !self.state.show_skins {
+                    // Open beside the player (ignored where windows can't be placed, e.g. Wayland).
+                    self.state.skins_window_pos = ctx
+                        .input(|i| i.viewport().outer_rect)
+                        .map(|r| r.right_top() + Vec2::new(8.0, 0.0));
+                }
+                self.state.show_skins = true;
+            }
             Action::About => self.state.show_about = true,
             Action::FileInfo => {
+                // By id: the window keeps showing this entry when the list is reordered.
+                let playlist = self.controller.playlist();
                 self.state.info = self
                     .first_selected()
-                    .or_else(|| self.controller.playlist().current_index());
+                    .and_then(|i| playlist.get(i))
+                    .or_else(|| playlist.current())
+                    .map(eleven_core::Entry::id);
             }
             Action::AddFiles => {
                 let start = self.start_dir();

@@ -123,20 +123,21 @@ fn start_stream(device_name: Option<&str>, shared: Arc<Shared>) -> Result<Starte
     let format = supported.sample_format();
     let config: StreamConfig = supported.into();
     let rate = config.sample_rate;
+    let on_error = error_handler(Arc::clone(&shared));
     let Pipes {
         producer,
         renderer,
         vis,
     } = Pipes::new(shared, rate);
     let stream = match format {
-        SampleFormat::F32 => build_f32(&device, config, renderer),
-        SampleFormat::I16 => build::<i16>(&device, config, renderer),
-        SampleFormat::U16 => build::<u16>(&device, config, renderer),
-        SampleFormat::I32 => build::<i32>(&device, config, renderer),
-        SampleFormat::U32 => build::<u32>(&device, config, renderer),
-        SampleFormat::F64 => build::<f64>(&device, config, renderer),
-        SampleFormat::I8 => build::<i8>(&device, config, renderer),
-        SampleFormat::U8 => build::<u8>(&device, config, renderer),
+        SampleFormat::F32 => build_f32(&device, config, renderer, on_error),
+        SampleFormat::I16 => build::<i16>(&device, config, renderer, on_error),
+        SampleFormat::U16 => build::<u16>(&device, config, renderer, on_error),
+        SampleFormat::I32 => build::<i32>(&device, config, renderer, on_error),
+        SampleFormat::U32 => build::<u32>(&device, config, renderer, on_error),
+        SampleFormat::F64 => build::<f64>(&device, config, renderer, on_error),
+        SampleFormat::I8 => build::<i8>(&device, config, renderer, on_error),
+        SampleFormat::U8 => build::<u8>(&device, config, renderer, on_error),
         other => Err(AudioError::Device(format!(
             "unsupported sample format {other}"
         ))),
@@ -147,15 +148,32 @@ fn start_stream(device_name: Option<&str>, shared: Arc<Shared>) -> Result<Starte
     Ok((stream, rate, name, producer, vis))
 }
 
-#[allow(clippy::needless_pass_by_value)] // cpal's error callback takes the error by value.
-fn on_error(err: cpal::Error) {
-    log::warn!("audio stream error: {err}");
+/// Whether a stream error means the stream is gone for good (it stops calling back).
+fn is_fatal(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::DeviceNotAvailable
+            | cpal::ErrorKind::StreamInvalidated
+            | cpal::ErrorKind::HostUnavailable
+    )
+}
+
+/// The stream error callback: logs, and asks the engine to reopen the output when the
+/// device went away (e.g. headphones unplugged), instead of waiting on a dead stream.
+fn error_handler(shared: Arc<Shared>) -> impl FnMut(cpal::Error) + Send + 'static {
+    move |err: cpal::Error| {
+        log::warn!("audio stream error: {err}");
+        if is_fatal(err.kind()) {
+            shared.report_stream_lost();
+        }
+    }
 }
 
 fn build_f32(
     device: &cpal::Device,
     config: StreamConfig,
     mut renderer: Renderer,
+    on_error: impl FnMut(cpal::Error) + Send + 'static,
 ) -> Result<cpal::Stream> {
     let channels = usize::from(config.channels);
     device
@@ -172,6 +190,7 @@ fn build<T>(
     device: &cpal::Device,
     config: StreamConfig,
     mut renderer: Renderer,
+    on_error: impl FnMut(cpal::Error) + Send + 'static,
 ) -> Result<cpal::Stream>
 where
     T: SizedSample + FromSample<f32>,

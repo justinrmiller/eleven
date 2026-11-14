@@ -64,6 +64,8 @@ struct Status {
     /// Bumped by the handle on every Play, Stop and Shutdown so blocked network operations can
     /// abort. A Play's new value is its generation.
     interrupt: Arc<AtomicU64>,
+    /// How many outputs have been opened (diagnostics and tests).
+    outputs_opened: AtomicU64,
 }
 
 impl Status {
@@ -147,6 +149,7 @@ impl Engine {
             status: Arc::clone(&status),
             vis: Arc::clone(&vis),
             output: out,
+            spec: spec.clone(),
             producer,
             current: None,
             eq: EqSettings::default(),
@@ -185,13 +188,22 @@ impl Engine {
         generation
     }
 
-    /// Pauses playback.
+    /// Pauses playback. Takes effect at once, even while the engine thread waits on a stalled
+    /// stream; the engine catches up when it next runs.
     pub fn pause(&self) {
+        if self.status.state() == PlaybackState::Playing {
+            self.shared.set_paused(true);
+            self.status.set_state(PlaybackState::Paused);
+        }
         self.send(Command::Pause);
     }
 
-    /// Resumes paused playback.
+    /// Resumes paused playback (at once, like [`Engine::pause`]).
     pub fn resume(&self) {
+        if self.status.state() == PlaybackState::Paused {
+            self.shared.set_paused(false);
+            self.status.set_state(PlaybackState::Playing);
+        }
         self.send(Command::Resume);
     }
 
@@ -346,6 +358,7 @@ fn open_output(
             output::null_out::NullOutput::open(44_100, true, Arc::clone(shared))
         }
     };
+    status.outputs_opened.fetch_add(1, Ordering::AcqRel);
     status
         .output_rate
         .store(out.sample_rate(), Ordering::Release);
@@ -405,6 +418,8 @@ struct Worker {
     status: Arc<Status>,
     vis: Arc<Mutex<Option<rtrb::Consumer<f32>>>>,
     output: Box<dyn Output>,
+    /// What `output` was opened from, to reopen it when its stream is lost.
+    spec: OutputSpec,
     producer: rtrb::Producer<f32>,
     current: Option<Current>,
     eq: EqSettings,
@@ -433,6 +448,13 @@ impl Worker {
             batch.extend(self.commands.try_iter());
             if !self.handle_batch(batch) {
                 break;
+            }
+            if self.shared.take_stream_lost() {
+                // The device went away (e.g. headphones unplugged): reopen the configured
+                // output, which follows the system default or falls back to silence.
+                log::warn!("audio stream lost; reopening the output");
+                let spec = self.spec.clone();
+                self.switch_output(&spec);
             }
             step = self.step();
         }
@@ -548,6 +570,10 @@ impl Worker {
             } else {
                 PlaybackState::Playing
             });
+        } else {
+            // The handle may have marked a track paused that ended meanwhile.
+            self.shared.set_paused(false);
+            self.status.set_state(PlaybackState::Stopped);
         }
     }
 
@@ -585,6 +611,7 @@ impl Worker {
             .as_ref()
             .map(|c| (c.paused, self.position_estimate()));
         self.status.hold(resume.map(|(_, position)| position));
+        self.spec = spec.clone();
         // Release the old device before opening the new one: ALSA refuses to open a card that
         // is still in use (e.g. `hw:` -> `plughw:` on the same card).
         let rate = self.output.sample_rate();
@@ -644,6 +671,11 @@ impl Worker {
         };
         if cur.paused {
             return Step::Idle;
+        }
+        // A flush timed out and the output has not performed it yet: it would discard what we
+        // push now (the start of a track, or audio after a seek), so wait for it.
+        if self.shared.flush_pending() {
+            return Step::Wait;
         }
         // 1. Push pending audio.
         if cur.pending_pos < cur.pending.len() {
@@ -726,5 +758,54 @@ impl Worker {
         self.status.set_base(Duration::ZERO);
         self.emit(generation, PlayerEvent::Finished);
         Step::Idle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lost_output_stream_is_reopened() {
+        let engine = Engine::start(
+            &OutputSpec::Null {
+                sample_rate: 44_100,
+                realtime: true,
+            },
+            Arc::new(|| {}),
+        );
+        assert_eq!(engine.status.outputs_opened.load(Ordering::Acquire), 1);
+        // What the cpal error callback does when the device disappears.
+        engine.shared.report_stream_lost();
+        // The engine notices on its next command (or step while playing).
+        engine.set_eq(&EqSettings::default());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while engine.status.outputs_opened.load(Ordering::Acquire) < 2 {
+            assert!(std::time::Instant::now() < deadline, "output not reopened");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(engine.output_rate(), 44_100);
+        assert!(engine.output_error().is_none());
+    }
+
+    #[test]
+    fn pausing_a_finished_track_settles_on_stopped() {
+        let engine = Engine::start(
+            &OutputSpec::Null {
+                sample_rate: 44_100,
+                realtime: false,
+            },
+            Arc::new(|| {}),
+        );
+        // As if the handle marked a track paused just as it ended.
+        engine.status.set_state(PlaybackState::Paused);
+        engine.shared.set_paused(true);
+        engine.pause();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while engine.state() != PlaybackState::Stopped {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!engine.shared.is_paused());
     }
 }
