@@ -82,6 +82,8 @@ pub enum Action {
 pub fn shortcut(key: Key, m: Modifiers) -> Option<Action> {
     let plain = !m.command && !m.alt && !m.shift;
     let cmd = m.command && !m.alt;
+    // Alt alone (Option on macOS): not Ctrl+Option, not Alt+Shift.
+    let alt = m.alt && !m.command && !m.ctrl && !m.shift;
     Some(match key {
         Key::Z if plain => Action::Previous,
         Key::X if plain => Action::Play,
@@ -107,9 +109,9 @@ pub fn shortcut(key: Key, m: Modifiers) -> Option<Action> {
         Key::S if cmd => Action::SavePlaylist,
         Key::I if cmd => Action::FileInfo,
         Key::Q if cmd => Action::Quit,
-        Key::S if m.alt && !m.command => Action::Skins,
-        Key::G if m.alt => Action::ToggleEqualizer,
-        Key::E if m.alt => Action::TogglePlaylist,
+        Key::S if alt => Action::Skins,
+        Key::G if alt => Action::ToggleEqualizer,
+        Key::E if alt => Action::TogglePlaylist,
         Key::Delete | Key::Backspace if plain => Action::RemoveSelected,
         Key::Enter if plain => Action::PlaySelected,
         _ => return None,
@@ -190,6 +192,20 @@ mod tests {
             Some(Action::TogglePlaylist)
         );
         assert_eq!(shortcut(Key::S, Modifiers::ALT), Some(Action::Skins));
+        let alt_shift = Modifiers {
+            shift: true,
+            ..Modifiers::ALT
+        };
+        assert_eq!(shortcut(Key::S, alt_shift), None);
+        let ctrl_option = Modifiers {
+            ctrl: true,
+            ..Modifiers::ALT
+        };
+        assert_eq!(
+            shortcut(Key::S, ctrl_option),
+            None,
+            "Ctrl+Option+S on macOS"
+        );
         assert_eq!(shortcut(Key::D, cmd()), Some(Action::ToggleDoubleSize));
         assert_eq!(shortcut(Key::Q, cmd()), Some(Action::Quit));
         assert_eq!(shortcut(Key::X, Modifiers::SHIFT), None);

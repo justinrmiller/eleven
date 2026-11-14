@@ -567,7 +567,7 @@ fn write_skin(dir: &Path, name: &str) -> PathBuf {
 }
 
 #[test]
-fn skins_load_from_config_preferences_and_dialog() {
+fn skins_load_from_config_browser_and_file_dialog() {
     let dir = tempfile::tempdir().unwrap();
     let skins = dir.path().join("skins");
     std::fs::create_dir_all(&skins).unwrap();
@@ -595,9 +595,13 @@ fn skins_load_from_config_preferences_and_dialog() {
     // The skin browser (menu -> Skins...) lists the skins directory and stays open.
     r.click("Menu");
     r.click("Skins...");
-    r.harness.run_steps(5); // the modal fades in
+    r.harness.run_steps(5); // the window fades in
     assert!(r.app().state.show_skins);
-    assert!(r.exists(&format!("Add .wsz files to {}", skins.display())));
+    assert!(
+        r.harness
+            .query_by_label_contains("Add .wsz files to")
+            .is_some()
+    );
     r.click("Beta");
     assert_eq!(r.app().look_name(), "Beta");
     r.click("Built-in");
@@ -628,8 +632,15 @@ fn skins_load_from_config_preferences_and_dialog() {
 }
 
 #[test]
-fn skins_have_their_own_dialog_under_preferences() {
-    let mut r = rig(2);
+fn skins_open_in_their_own_window_under_preferences() {
+    let dir = tempfile::tempdir().unwrap();
+    write_skin(dir.path(), "Alpha.wsz");
+    let mut r = rig_with(
+        Config::default(),
+        2,
+        FakeChooser::default(),
+        Some(dir.path().to_owned()),
+    );
     // The menu lists "Skins..." directly below "Preferences...".
     r.click("Menu");
     let prefs = r.harness.get_by_label("Preferences...").rect();
@@ -641,22 +652,30 @@ fn skins_have_their_own_dialog_under_preferences() {
     );
     assert!(about.top() >= skins.bottom() - 1.0);
     r.click("Skins...");
-    r.harness.run_steps(5); // the modal fades in
+    r.harness.run_steps(5); // the window fades in
+    // (Headless, the window is embedded in the player; natively it is its own window.)
     assert!(r.exists("Skins"));
     assert!(r.exists("Built-in"));
-    // The browser is modal: player shortcuts wait until it is closed.
+    assert!(r.exists("Alpha"));
+
+    // Not modal: the player keeps working while the browser is open.
     r.key(Key::X);
-    assert!(r.plays().is_empty());
-    // (The title bar has a "Close" button too: click the dialog's.)
+    assert_eq!(r.plays(), [file(0)]);
+    assert!(r.app().state.show_skins);
+
+    // Skins copied into the folder show up while it stays open.
+    write_skin(dir.path(), "Beta.wsz");
+    r.harness.run_steps(70); // a little over a second of frames
+    assert!(r.exists("Beta"));
+
+    // (The title bar has a "Close" button too: click the browser's.)
     r.harness
-        .get_by_role(egui::accesskit::Role::Dialog)
+        .get_by_role(egui::accesskit::Role::Window)
         .get_by_label("Close")
         .click();
     r.harness.run_steps(2);
     assert!(!r.app().state.show_skins);
     assert!(!r.exists("Built-in"));
-    r.key(Key::X);
-    assert_eq!(r.plays(), [file(0)]);
 
     // Alt+S opens it too, and Escape closes it.
     r.key_mod(Modifiers::ALT, Key::S);

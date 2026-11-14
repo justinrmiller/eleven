@@ -1,9 +1,10 @@
 //! Modal dialogs and tool windows: jump to file, open location, save preset, skins,
 //! preferences, file info and about.
 
-use std::path::Path;
+use std::path::{MAIN_SEPARATOR, Path};
 
 use egui::{Context, Id, Key, Modal, ScrollArea, TextEdit, Window};
+use egui::{Ui, ViewportBuilder, ViewportClass, ViewportId};
 use eleven_core::format::{format_optional_duration, playlist_time_text};
 
 use super::UiState;
@@ -23,17 +24,12 @@ pub struct JumpDialog {
 const MAX_RESULTS: usize = 200;
 
 /// Shows every open dialog. Returns actions for the app to perform.
-pub fn show(
-    ctx: &Context,
-    ctl: &mut Controller,
-    st: &mut UiState,
-    skins_dir: Option<&Path>,
-) -> Vec<Action> {
+pub fn show(ctx: &Context, ctl: &mut Controller, st: &mut UiState) -> Vec<Action> {
     let mut actions = Vec::new();
     jump(ctx, ctl, st);
     location(ctx, ctl, st);
     preset_name(ctx, ctl, st);
-    skins(ctx, ctl, st, skins_dir, &mut actions);
+    skins(ctx, ctl, st, &mut actions);
     preferences(ctx, ctl, st, &mut actions);
     file_info(ctx, ctl, st);
     about(ctx, st);
@@ -244,25 +240,64 @@ fn preferences(ctx: &Context, ctl: &mut Controller, st: &mut UiState, actions: &
     st.show_prefs = open;
 }
 
-/// The skin browser: the built-in look, the skins folder's `.wsz` files and any skin loaded
-/// from elsewhere. It stays open while switching, so skins can be compared.
-fn skins(
-    ctx: &Context,
-    ctl: &Controller,
-    st: &mut UiState,
-    skins_dir: Option<&Path>,
-    actions: &mut Vec<Action>,
-) {
+/// Whether one of this file's modal dialogs is open (they own the keyboard). egui's own record
+/// of modals lags a frame behind, so the app checks this too.
+#[must_use]
+pub fn modal_open(st: &UiState) -> bool {
+    st.jump.is_some() || st.location.is_some() || st.preset_name.is_some()
+}
+
+/// The skin browser, in its own window next to the player: the built-in look, the skins
+/// folder's `.wsz` files and any skin loaded from elsewhere. Choosing a skin applies it at once
+/// and the browser stays open, so skins can be compared on the player beside it.
+///
+/// A separate window rather than a dialog inside the player: the player can be as small as
+/// 275x116 (or 14 high when shaded), too small to hold the list.
+fn skins(ctx: &Context, ctl: &Controller, st: &mut UiState, actions: &mut Vec<Action>) {
     if !st.show_skins {
         return;
     }
+    let mut builder = ViewportBuilder::default()
+        .with_title("Skins")
+        .with_inner_size([250.0, 300.0])
+        .with_min_inner_size([200.0, 170.0]);
+    if let Some(pos) = st.skins_window_pos {
+        builder = builder.with_position(pos);
+    }
+    let close = ctx.show_viewport_immediate(
+        ViewportId::from_hash_of("eleven-skins"),
+        builder,
+        |ui, class| {
+            let mut close = false;
+            if class == ViewportClass::EmbeddedWindow {
+                skins_content(ui, ctl, st, actions, &mut close);
+            } else {
+                egui::Frame::central_panel(ui.style())
+                    .show(ui, |ui| skins_content(ui, ctl, st, actions, &mut close));
+            }
+            close || ui.input(|i| i.viewport().close_requested() || i.key_pressed(Key::Escape))
+        },
+    );
+    if close {
+        st.show_skins = false;
+    }
+}
+
+fn skins_content(
+    ui: &mut Ui,
+    ctl: &Controller,
+    st: &mut UiState,
+    actions: &mut Vec<Action>,
+    close: &mut bool,
+) {
     let skins: &[std::path::PathBuf] = st.skins.as_deref().unwrap_or_default();
-    let active = ctl.config().skin.clone();
-    let mut close = false;
-    let modal = Modal::new(Id::unique("skins_dialog")).show(ctx, |ui| {
-        ui.set_width(230.0);
-        ui.heading("Skins");
-        ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+    let active = ctl.config().skin.as_deref();
+    // Keep the buttons in view: the list scrolls in whatever height is left.
+    let reserve = 90.0;
+    ScrollArea::vertical()
+        .max_height((ui.available_height() - reserve).max(48.0))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
             if ui.radio(active.is_none(), "Built-in").clicked() {
                 st.pending_skin = Some(None);
             }
@@ -270,35 +305,37 @@ fn skins(
                 let name = path
                     .file_stem()
                     .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-                if ui
-                    .radio(active.as_deref() == Some(path.as_path()), name)
-                    .clicked()
-                {
+                if ui.radio(active == Some(path.as_path()), name).clicked() {
                     st.pending_skin = Some(Some(path.clone()));
                 }
             }
             // A skin loaded from outside the skins folder.
-            if let Some(path) = active.as_ref().filter(|p| !skins.contains(p)) {
+            if let Some(path) = active.filter(|p| !skins.iter().any(|s| s == p)) {
                 let _ = ui.radio(true, path.display().to_string());
             }
         });
-        if let Some(err) = &st.skin_error {
-            ui.colored_label(egui::Color32::LIGHT_RED, err);
+    if let Some(err) = &st.skin_error {
+        ui.colored_label(egui::Color32::LIGHT_RED, err);
+    }
+    if let Some(hint) = &st.skins_hint {
+        ui.weak(hint);
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Load skin file...").clicked() {
+            actions.push(Action::LoadSkin);
         }
-        if let Some(dir) = skins_dir {
-            ui.weak(format!("Add .wsz files to {}", home_relative(dir)));
+        if ui.button("Close").clicked() {
+            *close = true;
         }
-        ui.horizontal(|ui| {
-            if ui.button("Load skin file...").clicked() {
-                actions.push(Action::LoadSkin);
-            }
-            if ui.button("Close").clicked() {
-                close = true;
-            }
-        });
     });
-    if close || modal.should_close() {
-        st.show_skins = false;
+}
+
+/// `path` with `home` shown as `~`, the way people know their config folders.
+#[must_use]
+pub fn home_relative(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
+        None => path.display().to_string(),
     }
 }
 
@@ -385,17 +422,6 @@ fn about(ctx: &Context, st: &mut UiState) {
     st.show_about = open;
 }
 
-/// `path` with the home directory shown as `~`, as people know their config folders.
-fn home_relative(path: &Path) -> String {
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .and_then(|home| path.strip_prefix(home).ok())
-        .map_or_else(
-            || path.display().to_string(),
-            |rest| format!("~/{}", rest.display()),
-        )
-}
-
 /// The footer text, exposed for tests.
 #[must_use]
 pub fn playlist_footer(ctl: &Controller) -> String {
@@ -411,14 +437,19 @@ mod tests {
 
     #[test]
     fn paths_under_home_use_a_tilde() {
-        let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
-            return;
-        };
-        let skins = Path::new(&home).join(".config/eleven/skins");
-        assert_eq!(home_relative(&skins), "~/.config/eleven/skins");
+        let home = Path::new("/home/someone");
+        let skins = home.join(".config").join("eleven").join("skins");
         assert_eq!(
-            home_relative(Path::new("/elsewhere/skins")),
+            home_relative(&skins, Some(home)),
+            format!(
+                "~{MAIN_SEPARATOR}{}",
+                Path::new(".config/eleven/skins").display()
+            )
+        );
+        assert_eq!(
+            home_relative(Path::new("/elsewhere/skins"), Some(home)),
             "/elsewhere/skins"
         );
+        assert_eq!(home_relative(&skins, None), skins.display().to_string());
     }
 }
