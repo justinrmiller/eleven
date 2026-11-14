@@ -110,6 +110,7 @@ pub fn main_menu(ui: &mut Ui, ctl: &mut Controller, actions: &mut Vec<Action>) {
     });
     ui.separator();
     item(ui, "Preferences...", Action::Preferences, actions);
+    item(ui, "Skins...", Action::Skins, actions);
     item(ui, "About eleven", Action::About, actions);
     item(ui, "Exit", Action::Quit, actions);
 }

@@ -91,7 +91,8 @@ git tag v0.2.0 && git push origin main v0.2.0
 | `S` / `R` | Shuffle / Repeat |
 | `Alt+G` / `Alt+E` | Show/hide equalizer / playlist |
 | `Ctrl+D` / `Ctrl+W` / `Ctrl+T` | Double size / Shade / Always on top |
-| `Ctrl+P` | Preferences (output device, display, skins) |
+| `Ctrl+P` | Preferences (output device, display) |
+| `Alt+S` | Skins |
 | `Ctrl+A`, `Delete`, `Enter` | Select all, remove selected, play selected |
 | `Ctrl+O` / `Ctrl+S` | Load / save playlist |
 | `Ctrl+I` | File info |
@@ -110,7 +111,7 @@ Files live in `~/.config/eleven/` on Linux and `~/Library/Application Support/el
 
 - `config.toml`: settings, EQ state and user presets. Unknown or missing keys are tolerated. If the file can't be read at all (a typo, say), eleven starts with defaults and keeps the broken file as `config.toml.bad`, so your settings aren't lost.
 - `playlist.m3u`: the auto-saved playlist.
-- `skins/`: drop `.wsz` files here, then pick one under **Preferences → Skin**. **Load skin file…** opens any skin directly.
+- `skins/`: drop `.wsz` files here, then pick one in **Skins…** (in the right-click menu, under **Preferences…**, or `Alt+S`). **Load skin file…** opens any skin directly.
 
 No skin artwork is bundled. To try the skin pipeline without one, run `cargo run -p eleven-skin --example synthetic -- test.wsz`. It writes a placeholder skin with one flat colour per sprite sheet.
 

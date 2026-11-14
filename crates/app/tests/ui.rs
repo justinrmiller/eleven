@@ -592,13 +592,18 @@ fn skins_load_from_config_preferences_and_dialog() {
     r.click("Play");
     r.harness.run_steps(3);
 
-    // Preferences lists the skins directory.
-    r.key_mod(cmd(), Key::P);
+    // The skin browser (menu -> Skins...) lists the skins directory and stays open.
+    r.click("Menu");
+    r.click("Skins...");
+    r.harness.run_steps(5); // the modal fades in
+    assert!(r.app().state.show_skins);
+    assert!(r.exists(&format!("Add .wsz files to {}", skins.display())));
     r.click("Beta");
     assert_eq!(r.app().look_name(), "Beta");
     r.click("Built-in");
     assert_eq!(r.app().look_name(), "Built-in");
     assert_eq!(r.app().controller.config().skin, None);
+    assert!(r.app().state.show_skins);
 
     // "Load skin file..." uses the chooser.
     r.click("Load skin file...");
@@ -620,6 +625,51 @@ fn skins_load_from_config_preferences_and_dialog() {
             .as_deref()
             .is_some_and(|e| e.contains("Broken"))
     );
+}
+
+#[test]
+fn skins_have_their_own_dialog_under_preferences() {
+    let mut r = rig(2);
+    // The menu lists "Skins..." directly below "Preferences...".
+    r.click("Menu");
+    let prefs = r.harness.get_by_label("Preferences...").rect();
+    let skins = r.harness.get_by_label("Skins...").rect();
+    let about = r.harness.get_by_label("About eleven").rect();
+    assert!(
+        skins.top() >= prefs.bottom() - 1.0 && skins.top() - prefs.bottom() < 8.0,
+        "{prefs:?} then {skins:?}"
+    );
+    assert!(about.top() >= skins.bottom() - 1.0);
+    r.click("Skins...");
+    r.harness.run_steps(5); // the modal fades in
+    assert!(r.exists("Skins"));
+    assert!(r.exists("Built-in"));
+    // The browser is modal: player shortcuts wait until it is closed.
+    r.key(Key::X);
+    assert!(r.plays().is_empty());
+    // (The title bar has a "Close" button too: click the dialog's.)
+    r.harness
+        .get_by_role(egui::accesskit::Role::Dialog)
+        .get_by_label("Close")
+        .click();
+    r.harness.run_steps(2);
+    assert!(!r.app().state.show_skins);
+    assert!(!r.exists("Built-in"));
+    r.key(Key::X);
+    assert_eq!(r.plays(), [file(0)]);
+
+    // Alt+S opens it too, and Escape closes it.
+    r.key_mod(Modifiers::ALT, Key::S);
+    assert!(r.app().state.show_skins);
+    r.key(Key::Escape);
+    assert!(!r.app().state.show_skins);
+
+    // Preferences no longer has a skin section.
+    r.key_mod(cmd(), Key::P);
+    r.harness.run_steps(2);
+    assert!(r.exists("Scroll long titles"));
+    assert!(!r.exists("Built-in"));
+    assert!(!r.exists("Load skin file..."));
 }
 
 #[test]

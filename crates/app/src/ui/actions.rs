@@ -51,6 +51,8 @@ pub enum Action {
     CycleVis,
     /// Open preferences.
     Preferences,
+    /// Open the skin browser.
+    Skins,
     /// Remove selected playlist entries.
     RemoveSelected,
     /// Play the first selected entry.
@@ -105,6 +107,7 @@ pub fn shortcut(key: Key, m: Modifiers) -> Option<Action> {
         Key::S if cmd => Action::SavePlaylist,
         Key::I if cmd => Action::FileInfo,
         Key::Q if cmd => Action::Quit,
+        Key::S if m.alt && !m.command => Action::Skins,
         Key::G if m.alt => Action::ToggleEqualizer,
         Key::E if m.alt => Action::TogglePlaylist,
         Key::Delete | Key::Backspace if plain => Action::RemoveSelected,
@@ -128,6 +131,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+W", "Shade"),
     ("Ctrl+T", "Always on top"),
     ("Ctrl+P", "Preferences"),
+    ("Alt+S", "Skins"),
     ("Ctrl+A", "Select all"),
     ("Ctrl+O / Ctrl+S", "Load / Save playlist"),
     ("Ctrl+I", "File info"),
@@ -185,6 +189,7 @@ mod tests {
             shortcut(Key::E, Modifiers::ALT),
             Some(Action::TogglePlaylist)
         );
+        assert_eq!(shortcut(Key::S, Modifiers::ALT), Some(Action::Skins));
         assert_eq!(shortcut(Key::D, cmd()), Some(Action::ToggleDoubleSize));
         assert_eq!(shortcut(Key::Q, cmd()), Some(Action::Quit));
         assert_eq!(shortcut(Key::X, Modifiers::SHIFT), None);

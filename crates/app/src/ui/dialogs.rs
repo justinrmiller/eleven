@@ -1,5 +1,7 @@
-//! Modal dialogs and tool windows: jump to file, open location, save preset, preferences,
-//! file info and about.
+//! Modal dialogs and tool windows: jump to file, open location, save preset, skins,
+//! preferences, file info and about.
+
+use std::path::Path;
 
 use egui::{Context, Id, Key, Modal, ScrollArea, TextEdit, Window};
 use eleven_core::format::{format_optional_duration, playlist_time_text};
@@ -21,11 +23,17 @@ pub struct JumpDialog {
 const MAX_RESULTS: usize = 200;
 
 /// Shows every open dialog. Returns actions for the app to perform.
-pub fn show(ctx: &Context, ctl: &mut Controller, st: &mut UiState) -> Vec<Action> {
+pub fn show(
+    ctx: &Context,
+    ctl: &mut Controller,
+    st: &mut UiState,
+    skins_dir: Option<&Path>,
+) -> Vec<Action> {
     let mut actions = Vec::new();
     jump(ctx, ctl, st);
     location(ctx, ctl, st);
     preset_name(ctx, ctl, st);
+    skins(ctx, ctl, st, skins_dir, &mut actions);
     preferences(ctx, ctl, st, &mut actions);
     file_info(ctx, ctl, st);
     about(ctx, st);
@@ -188,7 +196,6 @@ fn preferences(ctx: &Context, ctl: &mut Controller, st: &mut UiState, actions: &
         return;
     }
     let devices: &[String] = st.devices.get_or_insert_with(|| ctl.output_devices());
-    let skins: &[std::path::PathBuf] = st.skins.as_deref().unwrap_or_default();
     let mut open = true;
     Window::new("Preferences")
         .open(&mut open)
@@ -233,9 +240,29 @@ fn preferences(ctx: &Context, ctl: &mut Controller, st: &mut UiState, actions: &
                 ui.label("Playlist rows");
                 ui.add(egui::DragValue::new(&mut cfg.playlist_rows).range(3..=40));
             });
-            ui.separator();
-            ui.heading("Skin");
-            let active = ctl.config().skin.clone();
+        });
+    st.show_prefs = open;
+}
+
+/// The skin browser: the built-in look, the skins folder's `.wsz` files and any skin loaded
+/// from elsewhere. It stays open while switching, so skins can be compared.
+fn skins(
+    ctx: &Context,
+    ctl: &Controller,
+    st: &mut UiState,
+    skins_dir: Option<&Path>,
+    actions: &mut Vec<Action>,
+) {
+    if !st.show_skins {
+        return;
+    }
+    let skins: &[std::path::PathBuf] = st.skins.as_deref().unwrap_or_default();
+    let active = ctl.config().skin.clone();
+    let mut close = false;
+    let modal = Modal::new(Id::unique("skins_dialog")).show(ctx, |ui| {
+        ui.set_width(230.0);
+        ui.heading("Skins");
+        ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
             if ui.radio(active.is_none(), "Built-in").clicked() {
                 st.pending_skin = Some(None);
             }
@@ -250,17 +277,29 @@ fn preferences(ctx: &Context, ctl: &mut Controller, st: &mut UiState, actions: &
                     st.pending_skin = Some(Some(path.clone()));
                 }
             }
+            // A skin loaded from outside the skins folder.
             if let Some(path) = active.as_ref().filter(|p| !skins.contains(p)) {
                 let _ = ui.radio(true, path.display().to_string());
             }
+        });
+        if let Some(err) = &st.skin_error {
+            ui.colored_label(egui::Color32::LIGHT_RED, err);
+        }
+        if let Some(dir) = skins_dir {
+            ui.weak(format!("Add .wsz files to {}", home_relative(dir)));
+        }
+        ui.horizontal(|ui| {
             if ui.button("Load skin file...").clicked() {
                 actions.push(Action::LoadSkin);
             }
-            if let Some(err) = &st.skin_error {
-                ui.colored_label(egui::Color32::LIGHT_RED, err);
+            if ui.button("Close").clicked() {
+                close = true;
             }
         });
-    st.show_prefs = open;
+    });
+    if close || modal.should_close() {
+        st.show_skins = false;
+    }
 }
 
 fn file_info(ctx: &Context, ctl: &Controller, st: &mut UiState) {
@@ -346,6 +385,17 @@ fn about(ctx: &Context, st: &mut UiState) {
     st.show_about = open;
 }
 
+/// `path` with the home directory shown as `~`, as people know their config folders.
+fn home_relative(path: &Path) -> String {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .and_then(|home| path.strip_prefix(home).ok())
+        .map_or_else(
+            || path.display().to_string(),
+            |rest| format!("~/{}", rest.display()),
+        )
+}
+
 /// The footer text, exposed for tests.
 #[must_use]
 pub fn playlist_footer(ctl: &Controller) -> String {
@@ -353,4 +403,22 @@ pub fn playlist_footer(ctl: &Controller) -> String {
         ctl.playlist().selected_duration(),
         ctl.playlist().total_duration(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_under_home_use_a_tilde() {
+        let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
+            return;
+        };
+        let skins = Path::new(&home).join(".config/eleven/skins");
+        assert_eq!(home_relative(&skins), "~/.config/eleven/skins");
+        assert_eq!(
+            home_relative(Path::new("/elsewhere/skins")),
+            "/elsewhere/skins"
+        );
+    }
 }

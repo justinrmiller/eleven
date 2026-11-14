@@ -49,7 +49,9 @@ pub struct UiState {
     pub preset_name: Option<String>,
     /// Preferences window open.
     pub show_prefs: bool,
-    /// Skins listed in preferences, read when it opens.
+    /// Skin browser open.
+    pub show_skins: bool,
+    /// Skins listed in the skin browser, read when it opens.
     pub skins: Option<Vec<PathBuf>>,
     /// Output devices listed in preferences, queried when it opens (enumerating devices can
     /// take a while, e.g. with ALSA).
@@ -279,15 +281,20 @@ impl ElevenApp {
                 pl,
             ));
         }
-        if self.state.show_prefs {
-            if self.state.skins.is_none() {
-                self.state.skins = Some(self.available_skins());
-            }
-        } else {
-            self.state.skins = None;
+        if !self.state.show_prefs {
             self.state.devices = None;
         }
-        actions.extend(dialogs::show(&ctx, &mut self.controller, &mut self.state));
+        if !self.state.show_skins {
+            self.state.skins = None;
+        } else if self.state.skins.is_none() {
+            self.state.skins = Some(self.available_skins());
+        }
+        actions.extend(dialogs::show(
+            &ctx,
+            &mut self.controller,
+            &mut self.state,
+            self.skins_dir.as_deref(),
+        ));
         actions.extend(self.keyboard(&ctx));
         self.drag_and_drop(&ctx, ui);
         for action in actions {
@@ -300,9 +307,12 @@ impl ElevenApp {
     }
 
     fn keyboard(&mut self, ctx: &Context) -> Vec<Action> {
+        // Modal dialogs own the keyboard.
         if ctx.egui_wants_keyboard_input()
             || self.state.jump.is_some()
             || self.state.location.is_some()
+            || self.state.preset_name.is_some()
+            || self.state.show_skins
         {
             return Vec::new();
         }
@@ -434,6 +444,7 @@ impl ElevenApp {
             Action::JumpToFile => self.state.jump = Some(JumpDialog::default()),
             Action::OpenLocation => self.state.location = Some(String::new()),
             Action::Preferences => self.state.show_prefs = true,
+            Action::Skins => self.state.show_skins = true,
             Action::About => self.state.show_about = true,
             Action::FileInfo => {
                 self.state.info = self
