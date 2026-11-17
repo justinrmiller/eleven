@@ -159,7 +159,6 @@ CI (`.github/workflows/ci.yml`) runs on Ubuntu and macOS. It runs fmt, clippy an
 
 ## Known limitations
 
-- **Untested on real setups.** Audible output on real hardware and behaviour on a real macOS desktop have not been verified. CI proves it builds and the tests pass on macOS; a manual run is still needed.
 - **Window management.** Wayland ignores always-on-top and doesn't let apps position windows. Minimizing the borderless window may not work on every desktop; turn on **Preferences → Use the system window frame** if your window manager misbehaves.
 - **Not implemented:**
   - Gapless playback and crossfade.
