@@ -3,6 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+    # Landing-site-only pushes don't need the Rust suite (they're published by pages.yml).
+    # Pull requests still always run CI, so required status checks never sit waiting.
+    paths-ignore:
+      - "eleven-landing-site/**"
+      - ".github/workflows/pages.yml"
   pull_request:
   workflow_dispatch:
 
