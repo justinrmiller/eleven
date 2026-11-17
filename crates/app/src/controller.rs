@@ -446,6 +446,13 @@ impl Controller {
         }
     }
 
+    /// Replaces the OS media controls. Windows attaches them to the window, which only exists
+    /// once the UI has started; the next [`Controller::update`] sends them the current track.
+    pub fn set_media_controls(&mut self, media: Box<dyn MediaControls>) {
+        self.media = media;
+        self.last_published = None;
+    }
+
     /// Shows a transient message in the title display.
     pub fn show_message(&mut self, text: &str) {
         self.message = Some((text.to_owned(), MESSAGE_SECS));
@@ -947,6 +954,10 @@ mod tests {
     use eleven_core::TimeMode;
     use std::sync::{Arc, Mutex};
 
+    /// A folder that is absolute on every platform: on Windows, `/music` would be relative to the
+    /// current drive.
+    const MUSIC: &str = if cfg!(windows) { "C:/music" } else { "/music" };
+
     struct Rig {
         c: Controller,
         backend: Arc<Mutex<FakeState>>,
@@ -978,14 +989,14 @@ mod tests {
     fn with_tracks(n: usize) -> Rig {
         let mut r = rig();
         for i in 0..n {
-            r.c.add_location(&format!("/music/{i:02}.mp3"));
+            r.c.add_location(&format!("{MUSIC}/{i:02}.mp3"));
         }
         r.c.update(0.0);
         r
     }
 
     fn file(i: usize) -> Location {
-        Location::File(PathBuf::from(format!("/music/{i:02}.mp3")))
+        Location::File(PathBuf::from(format!("{MUSIC}/{i:02}.mp3")))
     }
 
     fn push_event(r: &Rig, e: PlayerEvent) {
@@ -1512,6 +1523,27 @@ mod tests {
         assert!(published.abs_diff(Duration::from_secs(240)) < Duration::from_millis(1));
         r.c.seek_relative(SEEK_STEP, false);
         assert!(r.media.lock().unwrap().position.is_some());
+    }
+
+    #[test]
+    fn replaced_media_controls_receive_the_current_track() {
+        let mut r = with_tracks(1);
+        r.c.play();
+        push_event(&r, PlayerEvent::Started(info(true, Some(300))));
+        r.c.update(0.0);
+        assert_eq!(r.media.lock().unwrap().state, Some(PlaybackState::Playing));
+
+        // Nothing changed since the last update, yet the new controls must hear about it.
+        let late = FakeMediaControls::default();
+        let late_state = Arc::clone(&late.state);
+        r.c.set_media_controls(Box::new(late));
+        r.c.update(0.0);
+        let late_state = late_state.lock().unwrap();
+        assert_eq!(late_state.state, Some(PlaybackState::Playing));
+        assert_eq!(
+            late_state.title.as_deref(),
+            Some(r.c.current_title().as_str())
+        );
     }
 
     #[test]

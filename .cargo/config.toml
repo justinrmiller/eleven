@@ -1,0 +1,4 @@
+# Link the C runtime statically for MSVC builds, so eleven.exe runs without the Visual C++
+# Redistributable (vcruntime140.dll), which a fresh Windows install may lack.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -32,7 +32,7 @@ fn app(
         Persistence::default(),
     );
     for i in 0..tracks {
-        controller.add_location(&format!("/music/{i:02}.mp3"));
+        controller.add_location(&format!("{MUSIC}/{i:02}.mp3"));
     }
     controller.update(0.0);
     (ElevenApp::new(controller, Box::new(chooser), skins), state)
@@ -55,12 +55,16 @@ fn rig_with(config: Config, tracks: usize, chooser: FakeChooser, skins: Option<P
     Rig { harness, backend }
 }
 
+/// A folder that is absolute on every platform: on Windows, `/music` would be relative to the
+/// current drive.
+const MUSIC: &str = if cfg!(windows) { "C:/music" } else { "/music" };
+
 fn rig(tracks: usize) -> Rig {
     rig_with(Config::default(), tracks, FakeChooser::default(), None)
 }
 
 fn file(i: usize) -> Location {
-    Location::File(PathBuf::from(format!("/music/{i:02}.mp3")))
+    Location::File(PathBuf::from(format!("{MUSIC}/{i:02}.mp3")))
 }
 
 impl Rig {

@@ -375,7 +375,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let items = vec![
             PlaylistItem {
-                location: file("/music/one.flac"),
+                // Absolute on every platform, or loading resolves it against the folder.
+                location: file(if cfg!(windows) {
+                    "C:/music/one.flac"
+                } else {
+                    "/music/one.flac"
+                }),
                 title: Some("One".into()),
                 duration: Some(Duration::from_secs(3)),
             },

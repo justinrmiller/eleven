@@ -450,7 +450,7 @@ mod tests {
             home_relative(&skins, Some(home)),
             format!(
                 "~{MAIN_SEPARATOR}{}",
-                Path::new(".config/eleven/skins").display()
+                Path::new(".config").join("eleven").join("skins").display()
             )
         );
         assert_eq!(

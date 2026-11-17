@@ -12,7 +12,7 @@ pub const CONFIG_DIR_ENV: &str = "ELEVEN_CONFIG_DIR";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppPaths {
     /// Base directory: `~/.config/eleven` on Linux, `~/Library/Application Support/eleven`
-    /// on macOS.
+    /// on macOS, `%APPDATA%\eleven` on Windows.
     pub dir: PathBuf,
 }
 
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn detect_finds_a_directory() {
-        // Either the override or the platform default must resolve on Linux and macOS.
+        // Either the override or the platform default must resolve on every platform.
         let p = AppPaths::detect().expect("a config dir");
         assert!(p.dir.ends_with("eleven") || std::env::var_os(CONFIG_DIR_ENV).is_some());
     }

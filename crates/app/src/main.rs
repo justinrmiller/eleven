@@ -3,11 +3,16 @@
 //! Usage: `eleven [FILE | FOLDER | PLAYLIST | URL]...` — arguments are added to the playlist and
 //! the first one starts playing.
 
+// Release builds on Windows are GUI programs, so starting one opens no console window. Debug
+// builds keep the console for log output.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use eframe::egui;
-use eleven_app::backend::{EngineBackend, NativeFileChooser};
+use eleven_app::backend::{EngineBackend, MediaControls, NativeFileChooser, NoMediaControls};
+use eleven_app::media_keys;
 use eleven_app::paths::{AppPaths, load_config};
 use eleven_app::ui::layout::{Frame, Sections};
 use eleven_app::{Controller, ElevenApp, Persistence};
@@ -60,7 +65,13 @@ fn main() -> eframe::Result {
     let backend = EngineBackend::start(config.output_device.clone(), Arc::clone(&notify));
     let tags = MetadataScanner::new(2, &notify);
     let media_notify = Arc::clone(&notify);
-    let media = eleven_app::media_keys::create(move || media_notify());
+    let wake_ui = move || media_notify();
+    // Windows attaches the media controls to the window, so there they wait until it exists.
+    let media: Box<dyn MediaControls> = if media_keys::NEEDS_WINDOW {
+        Box::new(NoMediaControls)
+    } else {
+        media_keys::create(wake_ui.clone(), None)
+    };
     let sections = Sections {
         shaded: config.shaded,
         equalizer: config.show_equalizer,
@@ -104,6 +115,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let _ = ctx_slot.set(cc.egui_ctx.clone());
+            if media_keys::NEEDS_WINDOW {
+                controller
+                    .set_media_controls(media_keys::create(wake_ui, media_keys::window_hwnd(cc)));
+            }
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             Ok(Box::new(ElevenApp::new(
                 controller,

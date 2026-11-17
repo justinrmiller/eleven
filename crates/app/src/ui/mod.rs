@@ -174,7 +174,10 @@ impl ElevenApp {
         if self.state.skins_hint.is_none()
             && let Some(dir) = &self.skins_dir
         {
-            let home = directories::BaseDirs::new().map(|b| b.home_dir().to_owned());
+            // Windows has no `~` (Explorer can't open one), so it gets the full path.
+            let home = directories::BaseDirs::new()
+                .filter(|_| !cfg!(windows))
+                .map(|b| b.home_dir().to_owned());
             self.state.skins_hint = Some(format!(
                 "Add .wsz files to {}",
                 dialogs::home_relative(dir, home.as_deref())

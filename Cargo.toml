@@ -24,6 +24,8 @@ eframe = { version = "0.37", default-features = false, features = [
 ] }
 egui = "0.37"
 egui_kittest = "0.37"
+# Same version as eframe's: the Windows media controls need the window's HWND.
+raw-window-handle = "0.6"
 rfd = "0.18"
 souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
 
@@ -49,6 +51,9 @@ toml = "1.2"
 thiserror = "2"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+# Windows executable icon and version information (build script)
+winresource = { version = "0.1.34", default-features = false }
 
 # Testing
 proptest = "1.12"

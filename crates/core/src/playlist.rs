@@ -37,7 +37,7 @@ impl Location {
             {
                 rest = &rest["localhost".len()..];
             }
-            return Self::File(PathBuf::from(percent_decode(rest)));
+            return Self::File(file_url_path(&percent_decode(rest), cfg!(windows)));
         }
         let path = PathBuf::from(trimmed);
         match base_dir {
@@ -83,6 +83,21 @@ impl Location {
             Self::Url(_) => None,
         }
     }
+}
+
+/// The local path named by a decoded `file://` URL, given what follows `file://` (and any
+/// `localhost`). On Windows, `file:///C:/Music` names `C:\Music` and `file://server/share`
+/// the UNC path `\\server\share`; elsewhere the rest is already the path.
+fn file_url_path(rest: &str, windows: bool) -> PathBuf {
+    if !windows {
+        return PathBuf::from(rest);
+    }
+    let path = match rest.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => rest[1..].to_owned(),
+        [b'/', ..] => rest.to_owned(),
+        _ => format!("//{rest}"),
+    };
+    PathBuf::from(path.replace('/', "\\"))
 }
 
 /// Decodes `%XX` escapes (as used in `file://` URLs). Invalid escapes are kept verbatim.
@@ -797,6 +812,22 @@ mod tests {
         assert_eq!(
             Location::parse("file:///tmp/My%20Song.flac", None),
             Location::File("/tmp/My Song.flac".into())
+        );
+        assert_eq!(
+            file_url_path("/C:/My Music/a.mp3", true),
+            PathBuf::from(r"C:\My Music\a.mp3")
+        );
+        assert_eq!(
+            file_url_path("server/share/a.mp3", true),
+            PathBuf::from(r"\\server\share\a.mp3")
+        );
+        assert_eq!(
+            file_url_path("/tmp/a.mp3", true),
+            PathBuf::from(r"\tmp\a.mp3")
+        );
+        assert_eq!(
+            file_url_path("/C:/a.mp3", false),
+            PathBuf::from("/C:/a.mp3")
         );
         assert_eq!(
             Location::parse("sub/a.ogg", Some(Path::new("/base"))),

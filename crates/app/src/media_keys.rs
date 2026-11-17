@@ -1,18 +1,36 @@
 //! OS media keys and "Now Playing" integration via souvlaki: MPRIS on Linux,
-//! `MPRemoteCommandCenter` / `MPNowPlayingInfoCenter` on macOS.
+//! `MPRemoteCommandCenter` / `MPNowPlayingInfoCenter` on macOS, and the System Media Transport
+//! Controls on Windows.
 //!
-//! Excluded from the coverage gate: it needs a D-Bus session or a macOS app session.
+//! Excluded from the coverage gate: it needs a D-Bus session, a macOS app session or a Windows
+//! window.
 
+use std::ffi::c_void;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 use eleven_core::PlaybackState;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use souvlaki::{
     MediaControlEvent, MediaControls as Souvlaki, MediaMetadata, MediaPlayback, MediaPosition,
     PlatformConfig,
 };
 
 use crate::backend::{MediaCommand, MediaControls, NoMediaControls};
+
+/// Whether the controls need the main window: on Windows they attach to its `HWND`, so they
+/// can only be created once eframe has opened it (see [`window_hwnd`]).
+pub const NEEDS_WINDOW: bool = cfg!(windows);
+
+/// The Win32 `HWND` of `window`, or `None` for other kinds of window or if it has no handle.
+#[must_use]
+pub fn window_hwnd(window: &impl HasWindowHandle) -> Option<*mut c_void> {
+    match window.window_handle().ok()?.as_raw() {
+        // The handle is an opaque integer to us; souvlaki passes it back to Windows.
+        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get() as *mut c_void),
+        _ => None,
+    }
+}
 
 /// Media controls backed by souvlaki.
 pub struct SystemMediaControls {
@@ -43,15 +61,23 @@ pub fn map_event(event: &MediaControlEvent) -> Option<MediaCommand> {
 
 impl SystemMediaControls {
     /// Registers with the OS. `notify` is called (from souvlaki's thread) on each event so the
-    /// UI can wake up.
+    /// UI can wake up. `hwnd` is the main window, which Windows requires (see [`NEEDS_WINDOW`]).
     ///
     /// # Errors
-    /// Returns a description if the platform service is unavailable.
-    pub fn new(notify: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
+    /// Returns a description if the platform service is unavailable, or if Windows has no
+    /// window to attach to.
+    pub fn new(
+        notify: impl Fn() + Send + Sync + 'static,
+        hwnd: Option<*mut c_void>,
+    ) -> Result<Self, String> {
+        // souvlaki panics without a window on Windows.
+        if NEEDS_WINDOW && hwnd.is_none() {
+            return Err("no window handle".into());
+        }
         let config = PlatformConfig {
             display_name: "eleven",
             dbus_name: "eleven",
-            hwnd: None,
+            hwnd,
         };
         let mut controls = Souvlaki::new(config).map_err(|e| format!("{e:?}"))?;
         let (tx, rx): (Sender<MediaCommand>, Receiver<MediaCommand>) =
@@ -116,14 +142,18 @@ pub fn session_bus_available() -> bool {
         .is_some_and(|dir| dir.join("bus").exists())
 }
 
-/// Creates system media controls, or a no-op implementation if they are unavailable.
+/// Creates system media controls, or a no-op implementation if they are unavailable. `hwnd`
+/// is the main window, which Windows requires (see [`NEEDS_WINDOW`]).
 #[must_use]
-pub fn create(notify: impl Fn() + Send + Sync + 'static) -> Box<dyn MediaControls> {
+pub fn create(
+    notify: impl Fn() + Send + Sync + 'static,
+    hwnd: Option<*mut c_void>,
+) -> Box<dyn MediaControls> {
     if !session_bus_available() {
         log::info!("media keys unavailable: no D-Bus session bus");
         return Box::new(NoMediaControls);
     }
-    match SystemMediaControls::new(notify) {
+    match SystemMediaControls::new(notify, hwnd) {
         Ok(c) => Box::new(c),
         Err(e) => {
             log::info!("media keys unavailable: {e}");
