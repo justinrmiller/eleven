@@ -4,7 +4,7 @@ CARGO ?= cargo
 COV_IGNORE := (cpal_out|media_keys|main)\.rs$$
 COV_MIN ?= 90
 
-.PHONY: help all build run release test lint fmt clippy cov cov-html fixtures bundle-macos dist-macos dist-linux clean
+.PHONY: help all build run release test lint fmt clippy cov cov-html fixtures bundle-macos dist-macos dist-linux dist-windows clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -51,6 +51,9 @@ dist-macos: ## Universal .app as .dmg and .zip in dist/ (macOS only)
 
 dist-linux: ## .tar.gz and .deb in dist/ (Linux only)
 	./scripts/package-linux.sh
+
+dist-windows: ## .zip in dist/ (Windows only, needs PowerShell 7)
+	pwsh -NoProfile -File scripts/package-windows.ps1
 
 clean: ## Remove build output
 	$(CARGO) clean

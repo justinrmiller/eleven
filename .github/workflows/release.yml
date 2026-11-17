@@ -134,11 +134,31 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  windows:
+    name: Windows x86_64 (.zip)
+    needs: version
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain
+        run: rustup toolchain install
+      - name: Package
+        run: ./scripts/package-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eleven-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
   publish:
     name: publish GitHub release
     # Only a pushed tag publishes; manual runs on a tag ref only build.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [version, test, linux, macos]
+    needs: [version, test, linux, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -164,6 +184,7 @@ jobs:
             | Linux x86_64, Debian/Ubuntu | `eleven_*_amd64.deb`: `sudo apt install ./eleven_*_amd64.deb` |
             | Linux ARM64, Debian/Ubuntu (e.g. Raspberry Pi OS 64-bit) | `eleven_*_arm64.deb` |
             | Linux, other distros | `eleven-*-linux-x86_64.tar.gz` or `eleven-*-linux-aarch64.tar.gz` |
+            | Windows 10 and 11 (x86_64) | `eleven-*-windows-x86_64.zip`: unzip anywhere and run `eleven.exe` |
 
             Linux packages need glibc 2.35 or newer (Ubuntu 22.04, Debian 12 and later).
 
@@ -173,6 +194,10 @@ jobs:
             and choose **Open**. Either way, `xattr -dr com.apple.quarantine /Applications/eleven.app`
             also works.
 
+            **Windows:** the program is not code-signed, so SmartScreen may warn on the first
+            launch. Click **More info**, then **Run anyway**.
+
             **Verify a download** against `SHA256SUMS.txt` (files you didn't download are skipped):
             `sha256sum -c --ignore-missing SHA256SUMS.txt` on Linux, or
-            `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` on macOS.
+            `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` on macOS. On Windows, compare
+            the output of `Get-FileHash eleven-*.zip` in PowerShell with the file's line.

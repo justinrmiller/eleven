@@ -1,5 +1,20 @@
 # Notes for agents
 
+## Checking Windows from Linux
+
+The Windows build can be compiled, tested and launched from a Linux container with mingw-w64
+and Wine (`apt-get install mingw-w64 wine64 wine`, plus `xvfb` to launch the UI):
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine WINEDEBUG=-all
+cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+cargo test --workspace --target x86_64-pc-windows-gnu
+```
+
+Wine has no System Media Transport Controls, so media keys log "unavailable" there. Releases
+are built with MSVC on GitHub's Windows runners, which CI also tests on.
+
 ## Workarounds to remove once upstream fixes land
 
 When you upgrade `eframe` / `egui` / `egui-winit`, check each item below. If the upstream fix

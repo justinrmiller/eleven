@@ -1,6 +1,6 @@
 # eleven
 
-An XMMS-style audio player for **Linux and macOS**, written in Rust with [egui](https://github.com/emilk/egui).
+An XMMS-style audio player for **Linux, macOS and Windows**, written in Rust with [egui](https://github.com/emilk/egui).
 It goes to eleven.
 
 ![eleven at double size: main window, equalizer and playlist](docs/screenshot.png)
@@ -22,7 +22,7 @@ It goes to eleven.
   - Total and selected playing time.
   - Tags are read in the background.
 - **Skins.** An original built-in look, plus classic Winamp 2 / XMMS `.wsz` skins. If a skin has no equalizer or playlist artwork, those sections fall back to the built-in look. The loader also accepts common quirks: upper-case names, files in sub-folders, and short `viscolor.txt` palettes. It has been checked against five skins from the Winamp Skin Museum.
-- **OS integration.** Media keys and "Now Playing" (MPRIS on Linux, Now Playing on macOS), native file dialogs, and keyboard shortcuts that follow XMMS.
+- **OS integration.** Media keys and "Now Playing" (MPRIS on Linux, Now Playing on macOS, the media overlay on Windows), native file dialogs, and keyboard shortcuts that follow XMMS.
 - **Persistence.** Settings, EQ presets, the playlist and the current track are saved between runs.
 
 ## Building and running
@@ -33,12 +33,15 @@ The Rust toolchain is pinned in `rust-toolchain.toml`; `rustup` installs it auto
 |---|---|---|
 | **Linux** | `pkg-config`, `libasound2-dev` (Debian/Ubuntu) or `alsa-lib-devel` (Fedora) | X11 or Wayland with `libxkbcommon-x11`, plus an xdg-desktop-portal for file dialogs. PulseAudio and PipeWire work through their ALSA plugins. |
 | **macOS** | Xcode command-line tools | macOS 11+ |
+| **Windows** | Visual Studio Build Tools with **Desktop development with C++** (MSVC and the Windows SDK; `rustup-init` offers to install them) | Windows 10 or 11 |
 
 ```sh
 make run                         # release build and run
 cargo run -p eleven --release -- ~/Music/album  some.mp3  http://radio.example/stream
 make bundle-macos                # macOS: builds dist/eleven.app
 ```
+
+On Windows, `cargo run -p eleven --release` works the same way. Release builds open no console window; a debug build (`cargo run -p eleven`) keeps one for log output.
 
 Command-line arguments (files, folders, playlists, URLs) are added to the playlist and the first one starts playing.
 
@@ -66,15 +69,18 @@ git tag v0.2.0 && git push origin main v0.2.0
 |---|---|
 | macOS 11+ | universal (Apple Silicon + Intel) `eleven.app` as `.dmg` and `.zip` |
 | Linux x86_64 and ARM64 | `.deb` for Debian/Ubuntu, and a `.tar.gz` (built on Ubuntu 22.04, so glibc 2.35+) |
+| Windows 10 and 11, x86_64 | a `.zip` holding `eleven.exe`; no installer, and no Visual C++ runtime needed |
 
 - **Extras:** a `SHA256SUMS.txt` is attached too, and tags with a hyphen (`v0.2.0-beta.1`) become pre-releases.
 - **Test builds:** **Run workflow** on the Actions tab tests and builds the packages without ever publishing.
-- **Local builds:** `make dist-macos` and `make dist-linux` produce the same kinds of files in `dist/`. The `.deb`'s dependencies are computed from the binary, so a package built on a newer distro requires that distro's glibc.
+- **Local builds:** `make dist-macos`, `make dist-linux` and `make dist-windows` (or `pwsh scripts/package-windows.ps1`) produce the same kinds of files in `dist/`. The `.deb`'s dependencies are computed from the binary, so a package built on a newer distro requires that distro's glibc.
 
 **macOS security warning.** The app is ad-hoc signed but not notarized, so Gatekeeper blocks the first launch.
 - **macOS 15 or later:** open System Settings → Privacy & Security and click **Open Anyway**.
 - **macOS 14 and earlier:** right-click the app and choose **Open**.
 - **To remove the warning entirely:** notarization needs an Apple Developer ID certificate stored as repository secrets.
+
+**Windows security warning.** `eleven.exe` is not code-signed, so SmartScreen may warn on the first launch: click **More info**, then **Run anyway**. Removing the warning needs a code-signing certificate.
 
 ## Keyboard shortcuts
 
@@ -107,7 +113,7 @@ Mouse:
 
 ## Configuration and skins
 
-Files live in `~/.config/eleven/` on Linux and `~/Library/Application Support/eleven/` on macOS. Set `ELEVEN_CONFIG_DIR` to override the location.
+Files live in `~/.config/eleven/` on Linux, `~/Library/Application Support/eleven/` on macOS and `%APPDATA%\eleven\` on Windows. Set `ELEVEN_CONFIG_DIR` to override the location.
 
 - `config.toml`: settings, EQ state and user presets. Unknown or missing keys are tolerated. If the file can't be read at all (a typo, say), eleven starts with defaults and keeps the broken file as `config.toml.bad`, so your settings aren't lost.
 - `playlist.m3u`: the auto-saved playlist.
@@ -153,9 +159,9 @@ make cov     # line coverage via cargo-llvm-cov, gated at 90 %
 | Audio | Committed 1-second fixtures for every format (made by `make fixtures` with ffmpeg) cover decoding and sample-accurate seeking. The DSP output is measured against the design response. The engine runs end to end through a fast silent output. Streams are played from an in-process HTTP/Icecast server, so no network is needed. |
 | UI | egui_kittest drives the real UI headlessly: transport, shortcuts, sliders, playlist selection, double-click and menus, dialogs, presets, skins, shade/double size, drag and drop. |
 
-Coverage is about 95 % of lines. Excluded from the gate are `cpal_out.rs` (needs a sound card), `media_keys.rs` (needs a D-Bus or macOS session) and `main.rs`.
+Coverage is about 95 % of lines. Excluded from the gate are `cpal_out.rs` (needs a sound card), `media_keys.rs` (needs a D-Bus session, a macOS session or a Windows window) and `main.rs`.
 
-CI (`.github/workflows/ci.yml`) runs on Ubuntu and macOS. It runs fmt, clippy and tests on both, coverage on Linux, and builds the `.app` bundle on macOS.
+CI (`.github/workflows/ci.yml`) runs on Ubuntu, macOS and Windows. It runs fmt, clippy and tests on all three, coverage on Linux, and builds the `.app` bundle on macOS and the `.zip` on Windows.
 
 ## Known limitations
 
@@ -167,5 +173,4 @@ CI (`.github/workflows/ci.yml`) runs on Ubuntu and macOS. It runs fmt, clippy an
   - Tag editing.
   - Shaped skin windows (`region.txt`).
   - Old Shoutcast v1 servers that answer with `ICY 200 OK` instead of HTTP.
-  - Windows (probably close, but untested).
 - **Fixed EQ curve.** The equalizer uses fixed-Q peaking filters, so neighbouring bands overlap, which is noticeable at 12/14/16 kHz.

@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -53,6 +53,10 @@ jobs:
       - name: Build macOS app bundle
         if: runner.os == 'macOS'
         run: ./scripts/bundle-macos.sh && test -x dist/eleven.app/Contents/MacOS/eleven && plutil -lint dist/eleven.app/Contents/Info.plist
+
+      - name: Build Windows package
+        if: runner.os == 'Windows'
+        run: ./scripts/package-windows.ps1
 
   coverage:
     name: coverage
