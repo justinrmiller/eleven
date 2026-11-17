@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>eleven: a classic XMMS-style music player for Linux and macOS</title>
+  <meta name="description" content="eleven is a classic XMMS-style music player for Linux and macOS. Play your music and internet radio, tune it with a 10-band equalizer, build playlists and load Winamp 2 skins. It goes to eleven.">
+  <meta name="theme-color" content="#12141a">
+  <link rel="canonical" href="https://justinrmiller.github.io/eleven/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://justinrmiller.github.io/eleven/">
+  <meta property="og:title" content="eleven: a classic XMMS-style music player">
+  <meta property="og:description" content="Music files and internet radio, a 10-band equalizer, playlists and Winamp 2 skins, in one compact window. Linux and macOS. It goes to eleven.">
+  <meta property="og:image" content="https://justinrmiller.github.io/eleven/assets/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="eleven: a classic XMMS-style music player for Linux and macOS, shown next to its main window, equalizer and playlist.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top" aria-label="eleven home">
+        <img src="assets/favicon.png" alt="" width="28" height="28">
+        <span>eleven</span>
+      </a>
+      <nav aria-label="Primary">
+        <ul class="nav-links">
+          <li><a href="#tour">Tour</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#skins">Skins</a></li>
+          <li><a href="#shortcuts">Shortcuts</a></li>
+          <li><a href="#download">Download</a></li>
+        </ul>
+      </nav>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/justinrmiller/eleven">GitHub</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- Hero -------------------------------------------------------------->
+    <section class="hero" id="top">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <div class="lcd lcd-pill" aria-hidden="true">
+            <span class="lcd-play">&#9654;</span>
+            <svg class="seg7" data-seg7="00:11" height="20"></svg>
+            <span class="marquee"><span class="marquee-track">
+              <span>1. eleven &ndash; It goes to eleven (3:11) &nbsp;***&nbsp;</span><span>1. eleven &ndash; It goes to eleven (3:11) &nbsp;***&nbsp;</span>
+            </span></span>
+          </div>
+
+          <h1>A classic XMMS&#8209;style music player for Linux and macOS.</h1>
+          <p class="lead">
+            Play your music and internet radio, tune the sound with a 10-band
+            equalizer, build playlists, and dress it up with classic Winamp&nbsp;2
+            skins. All in one compact window.
+          </p>
+
+          <div class="cta-row">
+            <a class="btn btn-primary" id="hero-download" href="#download">Download</a>
+            <a class="btn btn-ghost" href="#tour">Take the tour</a>
+          </div>
+          <p class="fineprint">
+            <span data-version>Latest release</span> &middot; Macs with macOS 11 or later &middot; Linux PCs and Raspberry&nbsp;Pi (64-bit)
+          </p>
+        </div>
+
+        <figure class="hero-shot">
+          <img src="assets/screenshot.png" width="550" height="744"
+               alt="eleven at double size: the main window playing a track with a green seven-segment clock, the 10-band equalizer with its response graph, and the playlist.">
+        </figure>
+      </div>
+    </section>
+
+    <!-- What it plays ------------------------------------------------------>
+    <section class="strip" aria-label="What eleven plays">
+      <div class="wrap strip-inner">
+        <span class="strip-label">Plays</span>
+        <ul class="chips">
+          <li>MP3</li><li>FLAC</li><li>Ogg Vorbis</li><li>WAV</li><li>AIFF</li>
+          <li>AAC / M4A</li><li>Apple Lossless</li><li>Internet radio</li><li>M3U &amp; PLS playlists</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Tour -------------------------------------------------------------->
+    <section class="section" id="tour" aria-labelledby="tour-title">
+      <div class="wrap">
+        <header class="section-head">
+          <h2 id="tour-title">Three panels, one window</h2>
+          <p>A player, an equalizer and a playlist, docked together. Show only the ones you want.</p>
+        </header>
+
+        <div class="tour">
+          <article class="tour-row">
+            <figure class="tour-shot">
+              <img src="assets/main-window.png" width="550" height="231" loading="lazy"
+                   alt="The main window: a play indicator and 00:08 clock, a small spectrum analyzer, the scrolling title '1. D minor - Stonehenge (3:20)', 192 kbps, 48 kHz, stereo, volume and balance sliders, EQ and PL buttons, a seek bar, transport buttons, eject, shuffle and repeat.">
+            </figure>
+            <div class="tour-copy">
+              <h3>The player</h3>
+              <ul class="ticks">
+                <li>Play, pause, stop and skip with the buttons, or with <kbd>Z</kbd> <kbd>X</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>B</kbd> on the keyboard.</li>
+                <li>Click the clock to switch between time played and time left.</li>
+                <li>Click the visualizer to switch between a spectrum analyzer and an oscilloscope.</li>
+                <li>The scrolling title shows the track, or the song a radio station is playing right now.</li>
+                <li>Seek, set the volume and balance the speakers with the sliders.</li>
+                <li><strong>EQ</strong> and <strong>PL</strong> show or hide the equalizer and playlist. Right-click the player for the full menu.</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="tour-row">
+            <figure class="tour-shot">
+              <img src="assets/equalizer.png" width="550" height="234" loading="lazy"
+                   alt="The equalizer: ON and AUTO buttons, a green response curve, a PRESETS button, a preamp slider and ten band sliders labelled 60, 170, 310, 600, 1K, 3K, 6K, 12K, 14K and 16K.">
+            </figure>
+            <div class="tour-copy">
+              <h3>The equalizer</h3>
+              <ul class="ticks">
+                <li>Ten sliders from deep bass (60&nbsp;Hz) to sparkle (16&nbsp;kHz), plus a preamp to set the overall level.</li>
+                <li>The graph shows the curve you&rsquo;ve drawn as you drag.</li>
+                <li>Pick a built-in preset, or save your own under <strong>Presets</strong>.</li>
+                <li>Give a track its own sound: save it with <strong>Presets &rarr; Save auto-preset</strong>, turn on <strong>AUTO</strong>, and eleven applies it whenever that track plays.</li>
+                <li>Double-click a slider to put it back to flat.</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="tour-row">
+            <figure class="tour-shot">
+              <img src="assets/playlist.png" width="550" height="279" loading="lazy"
+                   alt="The playlist: three tracks with their lengths, ADD, REM, SEL, MISC and LIST buttons, and a 0:00/3:22 selected and total time counter.">
+            </figure>
+            <div class="tour-copy">
+              <h3>The playlist</h3>
+              <ul class="ticks">
+                <li>Add files, whole folders or radio station links, or drag them straight in from your file manager.</li>
+                <li>Double-click a track to play it. Select several with <kbd data-mod>Ctrl</kbd> and <kbd>Shift</kbd> to remove, keep or play them.</li>
+                <li>Sort by title, filename or length, reverse the order, or shuffle it.</li>
+                <li>Press <kbd>J</kbd> to jump to any track in a long list.</li>
+                <li>Save your playlists and open them again later, or in other players (M3U and PLS).</li>
+                <li>See the total playing time and the time of what you&rsquo;ve selected.</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Volume knob ------------------------------------------------------->
+    <section class="section section-alt eleven" aria-labelledby="eleven-title">
+      <div class="wrap eleven-grid">
+        <div class="panel knob-panel">
+          <div class="titlebar"><span>ELEVEN VOLUME</span></div>
+          <div class="panel-body knob-body">
+            <div class="knob" id="knob" role="slider" tabindex="0"
+                 aria-label="Volume" aria-valuemin="0" aria-valuemax="11"
+                 aria-valuenow="7" aria-valuetext="7 of 11">
+              <svg viewBox="-12 -12 224 224" aria-hidden="true">
+                <defs>
+                  <radialGradient id="knob-face" cx="40%" cy="35%" r="70%">
+                    <stop offset="0" stop-color="#4a5064"/>
+                    <stop offset="1" stop-color="#2f3342"/>
+                  </radialGradient>
+                </defs>
+                <g id="knob-ticks"></g>
+                <circle cx="100" cy="100" r="64" fill="#0e1016"/>
+                <circle cx="100" cy="100" r="58" fill="url(#knob-face)"/>
+                <line id="knob-needle" x1="100" y1="100" x2="100" y2="50"
+                      stroke="#f05a28" stroke-width="7" stroke-linecap="round"/>
+                <text x="26" y="194" text-anchor="middle" class="knob-label">0</text>
+                <text x="174" y="194" text-anchor="middle" class="knob-label">11</text>
+              </svg>
+            </div>
+            <div class="lcd knob-readout" aria-hidden="true">
+              <svg class="seg7" id="knob-digits" data-seg7=" 7" height="34"></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="eleven-copy">
+          <h2 id="eleven-title">It goes to eleven.</h2>
+          <p>
+            Most players stop at ten. In eleven, the volume reads on a 0&ndash;11 scale.
+            Go on: drag the knob, scroll on it, or use the arrow keys.
+          </p>
+          <p class="knob-status" id="knob-status">Turn it up.</p>
+          <div class="lcd analyzer-frame">
+            <canvas id="analyzer" aria-label="Decorative spectrum analyzer that follows the knob" role="img"></canvas>
+          </div>
+          <p class="fineprint">Just for fun: this analyzer is animated, not listening to anything.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- More features ----------------------------------------------------->
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <header class="section-head">
+          <h2 id="features-title">And everything around it</h2>
+          <p>The things that make a player pleasant to live with every day.</p>
+        </header>
+
+        <div class="feature-grid">
+          <article class="card">
+            <h3><span class="led" aria-hidden="true"></span>Internet radio</h3>
+            <p>Paste a station&rsquo;s stream link (<kbd data-mod>Ctrl</kbd>+<kbd>L</kbd>) or open its .m3u or .pls file. The title shows the song that&rsquo;s on now, when the station sends it.</p>
+          </article>
+          <article class="card">
+            <h3><span class="led" aria-hidden="true"></span>Media keys</h3>
+            <p>Your keyboard&rsquo;s play, pause and skip keys work, and the current track shows up in your desktop&rsquo;s media controls (Now Playing on macOS).</p>
+          </article>
+          <article class="card">
+            <h3><span class="led" aria-hidden="true"></span>Picks up where you left off</h3>
+            <p>Your playlist, the track you were on, your EQ and your settings are all still there next time you open it.</p>
+          </article>
+          <article class="card">
+            <h3><span class="led" aria-hidden="true"></span>Big, small or out of the way</h3>
+            <p>Double size for sharp, high-resolution screens. Shade mode shrinks it to a slim strip. Keep it on top of other windows, or hide the panels you don&rsquo;t use.</p>
+          </article>
+          <article class="card">
+            <h3><span class="led" aria-hidden="true"></span>Pick your speakers</h3>
+            <p>Choose which output device eleven plays through in Preferences (<kbd data-mod>Ctrl</kbd>+<kbd>P</kbd>).</p>
+          </article>
+          <article class="card">
+            <h3><span class="led" aria-hidden="true"></span>Track details</h3>
+            <p>See bitrate, sample rate and mono or stereo at a glance, or open the file info (<kbd data-mod>Ctrl</kbd>+<kbd>I</kbd>) for the full picture.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Skins ------------------------------------------------------------->
+    <section class="section section-alt" id="skins" aria-labelledby="skins-title">
+      <div class="wrap skins-grid">
+        <div>
+          <h2 id="skins-title">Bring back your favourite skin</h2>
+          <p>
+            eleven has its own clean look, and it also wears classic Winamp&nbsp;2 and XMMS
+            skins: the <code>.wsz</code> files you may still have lying around.
+          </p>
+          <p>
+            Skins that only cover the main window still work: eleven draws the equalizer and
+            playlist in its own style. No skins are included, but the
+            <a href="https://skins.webamp.org/">Winamp Skin Museum</a> is a good place to find one.
+          </p>
+        </div>
+        <div class="panel">
+          <div class="titlebar"><span>HOW TO ADD A SKIN</span></div>
+          <ol class="steps panel-body">
+            <li>Download a <code>.wsz</code> skin.</li>
+            <li>In eleven, open <strong>Skins&hellip;</strong> with <kbd>Alt</kbd>+<kbd>S</kbd>, or right-click the player.</li>
+            <li>Choose <strong>Load skin file&hellip;</strong> and pick it.</li>
+            <li>
+              To keep a collection, drop skins into your <code>skins</code> folder and they&rsquo;ll appear in the <strong>Skins&hellip;</strong> list:
+              <span class="small block"><code>~/.config/eleven/skins/</code> on Linux,<br><code>~/Library/Application Support/eleven/skins/</code> on macOS.</span>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- Shortcuts --------------------------------------------------------->
+    <section class="section" id="shortcuts" aria-labelledby="shortcuts-title">
+      <div class="wrap">
+        <header class="section-head">
+          <h2 id="shortcuts-title">Your fingers already know it</h2>
+          <p>Keyboard shortcuts follow XMMS. <span class="mod-note">On macOS, <kbd>Ctrl</kbd> is <kbd>Cmd</kbd>.</span></p>
+        </header>
+
+        <div class="shortcut-grid">
+          <div class="panel">
+            <div class="titlebar"><span>PLAYBACK</span></div>
+            <dl class="keys panel-body">
+              <div><dt><kbd>Z</kbd> <kbd>X</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>B</kbd></dt><dd>Previous, play, pause, stop, next</dd></div>
+              <div><dt><kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Skip back or ahead 5 seconds</dd></div>
+              <div><dt><kbd>&uarr;</kbd> <kbd>&darr;</kbd></dt><dd>Volume</dd></div>
+              <div><dt><kbd>S</kbd> / <kbd>R</kbd></dt><dd>Shuffle / repeat</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>I</kbd></dt><dd>File info</dd></div>
+            </dl>
+          </div>
+          <div class="panel">
+            <div class="titlebar"><span>PLAYLIST</span></div>
+            <dl class="keys panel-body">
+              <div><dt><kbd>L</kbd></dt><dd>Add files</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>L</kbd></dt><dd>Open a stream link</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></dt><dd>Add a folder</dd></div>
+              <div><dt><kbd>J</kbd></dt><dd>Jump to a track</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>O</kbd> / <kbd>S</kbd></dt><dd>Open / save playlist</dd></div>
+            </dl>
+          </div>
+          <div class="panel">
+            <div class="titlebar"><span>WINDOW</span></div>
+            <dl class="keys panel-body">
+              <div><dt><kbd>Alt</kbd>+<kbd>G</kbd> / <kbd>E</kbd></dt><dd>Show or hide equalizer / playlist</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>D</kbd></dt><dd>Double size</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>W</kbd></dt><dd>Shade mode</dd></div>
+              <div><dt><kbd data-mod>Ctrl</kbd>+<kbd>T</kbd></dt><dd>Always on top</dd></div>
+              <div><dt><kbd>Alt</kbd>+<kbd>S</kbd></dt><dd>Skins</dd></div>
+            </dl>
+          </div>
+        </div>
+        <p class="fineprint center">
+          Double-click a title bar to shade the window. Right-click the player for every option.
+        </p>
+      </div>
+    </section>
+
+    <!-- Download ---------------------------------------------------------->
+    <section class="section section-alt" id="download" aria-labelledby="download-title">
+      <div class="wrap">
+        <header class="section-head">
+          <h2 id="download-title">Download</h2>
+          <p><span data-version>Latest release</span><span data-release-date></span>.</p>
+        </header>
+
+        <div class="download-grid">
+          <article class="panel" data-platform="mac">
+            <div class="titlebar"><span>MAC</span></div>
+            <div class="panel-body">
+              <p class="platform-meta">Apple Silicon and Intel Macs with macOS 11 or later.</p>
+              <div class="btn-col">
+                <a class="btn btn-primary" data-asset="mac-dmg" href="https://github.com/justinrmiller/eleven/releases/latest">Download for Mac</a>
+                <a class="btn btn-ghost" data-asset="mac-zip" href="https://github.com/justinrmiller/eleven/releases/latest">Or as a .zip</a>
+              </div>
+              <details class="note" open>
+                <summary>Opening it the first time</summary>
+                <p>macOS will say it can&rsquo;t verify the app. To open it anyway:</p>
+                <ul>
+                  <li><strong>macOS 15 or later:</strong> System Settings &rarr; Privacy &amp; Security, then <strong>Open Anyway</strong>.</li>
+                  <li><strong>macOS 14 or earlier:</strong> right-click the app and choose <strong>Open</strong>.</li>
+                </ul>
+                <p>You only need to do this once.</p>
+              </details>
+            </div>
+          </article>
+
+          <article class="panel" data-platform="linux">
+            <div class="titlebar"><span>UBUNTU / DEBIAN</span></div>
+            <div class="panel-body">
+              <p class="platform-meta">Recent Ubuntu, Debian, Linux Mint, Pop!_OS and Raspberry Pi OS (64-bit) releases, 2022 or later.</p>
+              <div class="btn-col">
+                <a class="btn btn-primary" data-asset="deb-amd64" href="https://github.com/justinrmiller/eleven/releases/latest">Download for Intel / AMD PCs</a>
+                <a class="btn btn-ghost" data-asset="deb-arm64" href="https://github.com/justinrmiller/eleven/releases/latest">Download for ARM (Raspberry Pi)</a>
+              </div>
+              <p class="small">Open the file with your software installer, or run:</p>
+              <pre class="code"><code>sudo apt install ./eleven_*.deb</code></pre>
+            </div>
+          </article>
+
+          <article class="panel" data-platform="linux">
+            <div class="titlebar"><span>OTHER LINUX</span></div>
+            <div class="panel-body">
+              <p class="platform-meta">A ready-to-run archive for other distributions released since 2022.</p>
+              <div class="btn-col">
+                <a class="btn btn-primary" data-asset="tar-x86_64" href="https://github.com/justinrmiller/eleven/releases/latest">Download for Intel / AMD PCs</a>
+                <a class="btn btn-ghost" data-asset="tar-aarch64" href="https://github.com/justinrmiller/eleven/releases/latest">Download for ARM</a>
+              </div>
+              <p class="small">Unpack it and run <code>eleven</code>. A desktop entry and icon are included.</p>
+            </div>
+          </article>
+        </div>
+
+        <p class="fineprint center download-foot">
+          Older versions and checksums are on <a href="https://github.com/justinrmiller/eleven/releases">GitHub Releases</a>.
+          Prefer to build it yourself? The <a href="https://github.com/justinrmiller/eleven#building-and-running">README</a> explains how.
+        </p>
+      </div>
+    </section>
+
+    <!-- Not yet ----------------------------------------------------------->
+    <section class="section" id="not-yet" aria-labelledby="not-yet-title">
+      <div class="wrap narrow">
+        <h2 id="not-yet-title">What it doesn&rsquo;t do (yet)</h2>
+        <ul class="limits">
+          <li><strong>It&rsquo;s new.</strong> Sound on real speakers and the Mac app haven&rsquo;t been checked by hand yet, so expect rough edges.</li>
+          <li>No gapless playback or crossfading between tracks.</li>
+          <li>No plugins, CD playback or tag editing.</li>
+          <li>No Windows version.</li>
+          <li>Skins with custom window shapes show as plain rectangles.</li>
+          <li>A few very old Shoutcast radio stations won&rsquo;t connect.</li>
+          <li>On Wayland desktops, &ldquo;always on top&rdquo; doesn&rsquo;t work and eleven can&rsquo;t place its own window.</li>
+          <li>The top three EQ sliders (12&ndash;16&nbsp;kHz) overlap, so they affect each other more than you&rsquo;d expect.</li>
+        </ul>
+        <p>Something else missing or broken? <a href="https://github.com/justinrmiller/eleven/issues">Let us know</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="brand">
+        <img src="assets/favicon.png" alt="" width="24" height="24">
+        <span>eleven</span>
+      </div>
+      <ul class="footer-links">
+        <li><a href="https://github.com/justinrmiller/eleven">Source</a></li>
+        <li><a href="https://github.com/justinrmiller/eleven/releases">Releases</a></li>
+        <li><a href="https://github.com/justinrmiller/eleven/issues">Report a problem</a></li>
+      </ul>
+      <p class="small">Not affiliated with XMMS or Winamp.</p>
+    </div>
+  </footer>
+</body>
+</html>

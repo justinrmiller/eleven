@@ -1,0 +1,38 @@
+# Publishes eleven-landing-site/ to GitHub Pages at https://justinrmiller.github.io/eleven/.
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions".
+name: Landing site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "eleven-landing-site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deployment halfway; queue the next one instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: publish to GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: eleven-landing-site
+      - id: deployment
+        uses: actions/deploy-pages@v5
