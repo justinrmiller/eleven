@@ -1,6 +1,6 @@
 # eleven landing site
 
-The one-page website for eleven, published at <https://justinrmiller.github.io/eleven/>. Plain
+The one-page website for eleven, published at <https://www.justinrmiller.com/eleven/>. Plain
 HTML, CSS and JavaScript: no build step, no dependencies, no third-party fonts or trackers.
 
 ## Files
@@ -47,7 +47,9 @@ workflow**). Nothing else in the repo is published.
 - **CI:** pushes to `main` that only touch this folder or `pages.yml` skip the Rust CI
   (`paths-ignore` in `ci.yml`). Pull requests still run it.
 - **Link previews:** `index.html` points `og:url`, `og:image` and the canonical link at
-  `https://justinrmiller.github.io/eleven/`. If the site moves to a custom domain, update them.
+  `https://www.justinrmiller.com/eleven/`. That domain comes from the custom domain on the
+  `justinrmiller.github.io` user site, which `justinrmiller.github.io/eleven/` redirects to; if it
+  changes, update them.
 
 ## Keeping it in sync
 

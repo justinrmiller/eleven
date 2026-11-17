@@ -1,4 +1,4 @@
-# Publishes eleven-landing-site/ to GitHub Pages at https://justinrmiller.github.io/eleven/.
+# Publishes eleven-landing-site/ to GitHub Pages at https://www.justinrmiller.com/eleven/.
 # One-time setup: Settings -> Pages -> Source: "GitHub Actions".
 name: Landing site
 
