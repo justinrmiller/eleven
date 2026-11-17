@@ -296,11 +296,15 @@ const analyzer = (() => {
     return ((deg - START) / SWEEP) * MAX;
   }
 
+  // Safari shows :focus-visible after a click or tap, so the focus ring is controlled here:
+  // hidden while the knob is used with a pointer, shown again on any key press or a fresh Tab.
   knob.addEventListener("pointerdown", (e) => {
+    knob.classList.add("pointer-focus");
     knob.setPointerCapture(e.pointerId);
     knob.focus({ preventScroll: true });
     set(valueFromPointer(e));
   });
+  knob.addEventListener("blur", () => knob.classList.remove("pointer-focus"));
   knob.addEventListener("pointermove", (e) => {
     if (knob.hasPointerCapture(e.pointerId)) set(valueFromPointer(e));
   });
@@ -309,6 +313,7 @@ const analyzer = (() => {
     set(value + (e.deltaY < 0 ? 1 : -1));
   }, { passive: false });
   knob.addEventListener("keydown", (e) => {
+    knob.classList.remove("pointer-focus");
     const steps = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 3, PageDown: -3 };
     if (e.key in steps) set(value + steps[e.key]);
     else if (e.key === "Home") set(0);
